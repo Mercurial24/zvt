@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+交易辅助情报同步器
+主要功能：
+1. 每日同步龙虎榜数据；
+2. 筛选并监控顶级营业部（席位）的近期动态；
+3. 对符合筛选条件的活跃股发送预警报告。
+数据源：默认 East Money (EM)
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

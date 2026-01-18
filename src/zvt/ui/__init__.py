@@ -10,7 +10,7 @@ zvt_app = dash.Dash(
     __name__,
     meta_tags=[{"name": "viewport", "content": "width=device-width"}],
     assets_folder=assets_path,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[dbc.themes.DARKLY],
 )
 
 zvt_app.config.suppress_callback_exceptions = True

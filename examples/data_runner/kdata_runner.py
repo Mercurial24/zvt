@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+K 线及市场综合数据同步器
+主要功能：
+1. 同步 A 股、港股、指数、板块的本体及日线行情；
+2. 同步涨停、个股新闻等辅助分析数据；
+3. 统计热门话题并发送邮件报告。
+数据源：默认 East Money (EM)
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

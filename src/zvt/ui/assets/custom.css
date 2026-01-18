@@ -4,10 +4,10 @@
 body {
     margin: 0px;
     padding: 0px;
-    background-color: #F3F4F9;
-    font-family: 'Roboto';
-    color: #203cb3;
+    font-family: 'Roboto', sans-serif;
+    /* background-color and color are handled by Bootstrap DARKLY theme */
 }
+
 
 .zvt-banner {
     color: #7f7f7f;

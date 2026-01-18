@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+聚宽基金数据同步器 (JoinQuant)
+主要功能：利用聚宽接口同步基金信息、基金持仓以及个股估值数据。
+数据源：JoinQuant
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

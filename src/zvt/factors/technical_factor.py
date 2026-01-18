@@ -98,7 +98,10 @@ class TechnicalFactor(Factor, metaclass=FactorMeta):
         )
 
     def drawer_sub_df_list(self) -> Optional[List[pd.DataFrame]]:
-        return [self.factor_df[["volume"]]]
+        from zvt.utils.pd_utils import pd_is_not_null
+        if pd_is_not_null(self.factor_df) and "volume" in self.factor_df.columns:
+            return [self.factor_df[["volume"]]]
+        return None
 
 
 # the __all__ is generated

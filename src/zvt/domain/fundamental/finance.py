@@ -32,111 +32,111 @@ class BalanceSheet(FinanceBase, Mixin):
     #: 流动资产
     #
     #: 货币资金
-    cash_and_cash_equivalents = Column(Float)
+    cash_and_cash_equivalents = Column(Float, comment="货币资金")
     #: 应收票据
-    note_receivable = Column(Float)
+    note_receivable = Column(Float, comment="应收票据")
     #: 应收账款
-    accounts_receivable = Column(Float)
+    accounts_receivable = Column(Float, comment="应收账款")
     #: 预付款项
-    advances_to_suppliers = Column(Float)
+    advances_to_suppliers = Column(Float, comment="预付款项")
     #: 其他应收款
-    other_receivables = Column(Float)
+    other_receivables = Column(Float, comment="其他应收款")
     #: 存货
-    inventories = Column(Float)
+    inventories = Column(Float, comment="存货")
     #: 一年内到期的非流动资产
-    current_portion_of_non_current_assets = Column(Float)
+    current_portion_of_non_current_assets = Column(Float, comment="一年内到期的非流动资产")
     #: 其他流动资产
-    other_current_assets = Column(Float)
+    other_current_assets = Column(Float, comment="其他流动资产")
     #: 流动资产合计
-    total_current_assets = Column(Float)
+    total_current_assets = Column(Float, comment="流动资产合计")
     #: 非流动资产
     #
     #: 可供出售金融资产
-    fi_assets_saleable = Column(Float)
+    fi_assets_saleable = Column(Float, comment="可供出售金融资产")
     #: 长期应收款
-    long_term_receivables = Column(Float)
+    long_term_receivables = Column(Float, comment="长期应收款")
     #: 长期股权投资
-    long_term_equity_investment = Column(Float)
+    long_term_equity_investment = Column(Float, comment="长期股权投资")
     #: 投资性房地产
-    real_estate_investment = Column(Float)
+    real_estate_investment = Column(Float, comment="投资性房地产")
     #: 固定资产
-    fixed_assets = Column(Float)
+    fixed_assets = Column(Float, comment="固定资产")
     #: 在建工程
-    construction_in_process = Column(Float)
+    construction_in_process = Column(Float, comment="在建工程")
     #: 无形资产
-    intangible_assets = Column(Float)
+    intangible_assets = Column(Float, comment="无形资产")
     #: 商誉
-    goodwill = Column(Float)
+    goodwill = Column(Float, comment="商誉")
     #: 长期待摊费用
-    long_term_prepaid_expenses = Column(Float)
+    long_term_prepaid_expenses = Column(Float, comment="长期待摊费用")
     #: 递延所得税资产
-    deferred_tax_assets = Column(Float)
+    deferred_tax_assets = Column(Float, comment="递延所得税资产")
     #: 其他非流动资产
-    other_non_current_assets = Column(Float)
+    other_non_current_assets = Column(Float, comment="其他非流动资产")
     #: 非流动资产合计
-    total_non_current_assets = Column(Float)
+    total_non_current_assets = Column(Float, comment="非流动资产合计")
     #: 资产总计
-    total_assets = Column(Float)
+    total_assets = Column(Float, comment="资产总计")
     #: 流动负债
     #
     #: 短期借款
-    short_term_borrowing = Column(Float)
+    short_term_borrowing = Column(Float, comment="短期借款")
     #: 吸收存款及同业存放
-    accept_money_deposits = Column(Float)
+    accept_money_deposits = Column(Float, comment="吸收存款及同业存放")
     #: 应付账款
-    accounts_payable = Column(Float)
+    accounts_payable = Column(Float, comment="应付账款")
     #: 预收款项
-    advances_from_customers = Column(Float)
+    advances_from_customers = Column(Float, comment="预收款项")
     #: 应付职工薪酬
-    employee_benefits_payable = Column(Float)
+    employee_benefits_payable = Column(Float, comment="应付职工薪酬")
     #: 应交税费
-    taxes_payable = Column(Float)
+    taxes_payable = Column(Float, comment="应交税费")
     #: 应付利息
-    interest_payable = Column(Float)
+    interest_payable = Column(Float, comment="应付利息")
     #: 其他应付款
-    other_payable = Column(Float)
+    other_payable = Column(Float, comment="其他应付款")
     #: 一年内到期的非流动负债
-    current_portion_of_non_current_liabilities = Column(Float)
+    current_portion_of_non_current_liabilities = Column(Float, comment="一年内到期的非流动负债")
     #: 其他流动负债
-    other_current_liabilities = Column(Float)
+    other_current_liabilities = Column(Float, comment="其他流动负债")
     #: 流动负债合计
-    total_current_liabilities = Column(Float)
+    total_current_liabilities = Column(Float, comment="流动负债合计")
     #: 非流动负债
     #
     #: 长期借款
-    long_term_borrowing = Column(Float)
+    long_term_borrowing = Column(Float, comment="长期借款")
     #: 长期应付款
-    long_term_payable = Column(Float)
+    long_term_payable = Column(Float, comment="长期应付款")
     #: 递延收益
-    deferred_revenue = Column(Float)
+    deferred_revenue = Column(Float, comment="递延收益")
     #: 递延所得税负债
-    deferred_tax_liabilities = Column(Float)
+    deferred_tax_liabilities = Column(Float, comment="递延所得税负债")
     #: 其他非流动负债
-    other_non_current_liabilities = Column(Float)
+    other_non_current_liabilities = Column(Float, comment="其他非流动负债")
     #: 非流动负债合计
-    total_non_current_liabilities = Column(Float)
+    total_non_current_liabilities = Column(Float, comment="非流动负债合计")
     #: 负债合计
-    total_liabilities = Column(Float)
+    total_liabilities = Column(Float, comment="负债合计")
     #: 所有者权益(或股东权益)
     #
     #: 实收资本（或股本）
-    capital = Column(Float)
+    capital = Column(Float, comment="股本")
     #: 资本公积
-    capital_reserve = Column(Float)
+    capital_reserve = Column(Float, comment="资本公积")
     #: 专项储备
-    special_reserve = Column(Float)
+    special_reserve = Column(Float, comment="专项储备")
     #: 盈余公积
-    surplus_reserve = Column(Float)
+    surplus_reserve = Column(Float, comment="盈余公积")
     #: 未分配利润
-    undistributed_profits = Column(Float)
+    undistributed_profits = Column(Float, comment="未分配利润")
     #: 归属于母公司股东权益合计
-    equity = Column(Float)
+    equity = Column(Float, comment="归属于母公司股东权益合计")
     #: 少数股东权益
-    equity_as_minority_interest = Column(Float)
+    equity_as_minority_interest = Column(Float, comment="少数股东权益")
     #: 股东权益合计
-    total_equity = Column(Float)
+    total_equity = Column(Float, comment="股东权益合计")
     #: 负债和股东权益合计
-    total_liabilities_and_equity = Column(Float)
+    total_liabilities_and_equity = Column(Float, comment="负债及股东权益总计")
 
     #: 银行相关
     #: 资产
@@ -481,69 +481,69 @@ class IncomeStatement(FinanceBase, Mixin):
     #: 营业总收入
     #
     #: 营业收入
-    operating_income = Column(Float)
+    operating_income = Column(Float, comment="营业收入")
     #: 营业总成本
-    total_operating_costs = Column(Float)
+    total_operating_costs = Column(Float, comment="营业总成本")
     #: 营业成本
-    operating_costs = Column(Float)
+    operating_costs = Column(Float, comment="营业成本")
     #: 研发费用
-    rd_costs = Column(Float)
+    rd_costs = Column(Float, comment="研发费用")
     #: 提取保险合同准备金净额
     net_change_in_insurance_contract_reserves = Column(Float)
     #: 营业税金及附加
-    business_taxes_and_surcharges = Column(Float)
+    business_taxes_and_surcharges = Column(Float, comment="营业税金及附加")
     #: 销售费用
-    sales_costs = Column(Float)
+    sales_costs = Column(Float, comment="销售费用")
     #: 管理费用
-    managing_costs = Column(Float)
+    managing_costs = Column(Float, comment="管理费用")
     #: 财务费用
-    financing_costs = Column(Float)
+    financing_costs = Column(Float, comment="财务费用")
     #: 资产减值损失
-    assets_devaluation = Column(Float)
+    assets_devaluation = Column(Float, comment="资产减值损失")
     #: 其他经营收益
     #
     #: 加: 投资收益
-    investment_income = Column(Float)
+    investment_income = Column(Float, comment="投资收益")
     #: 其中: 对联营企业和合营企业的投资收益
-    investment_income_from_related_enterprise = Column(Float)
+    investment_income_from_related_enterprise = Column(Float, comment="对联营企业和合营企业的投资收益")
     #: 营业利润
-    operating_profit = Column(Float)
+    operating_profit = Column(Float, comment="营业利润")
     #: 加: 营业外收入
-    non_operating_income = Column(Float)
+    non_operating_income = Column(Float, comment="营业外收入")
     #: 减: 营业外支出
-    non_operating_costs = Column(Float)
+    non_operating_costs = Column(Float, comment="营业外支出")
     #: 其中: 非流动资产处置净损失
-    loss_on_disposal_non_current_asset = Column(Float)
+    loss_on_disposal_non_current_asset = Column(Float, comment="非流动资产处置净损失")
 
     #: 利润总额
-    total_profits = Column(Float)
+    total_profits = Column(Float, comment="利润总额")
     #: 减: 所得税费用
-    tax_expense = Column(Float)
+    tax_expense = Column(Float, comment="所得税费用")
     #: 净利润
-    net_profit = Column(Float)
+    net_profit = Column(Float, comment="净利润")
     #: 其中: 归属于母公司股东的净利润
-    net_profit_as_parent = Column(Float)
+    net_profit_as_parent = Column(Float, comment="归属于母公司股东的净利润")
     #: 少数股东损益
-    net_profit_as_minority_interest = Column(Float)
+    net_profit_as_minority_interest = Column(Float, comment="少数股东损益")
     #: 扣除非经常性损益后的净利润
-    deducted_net_profit = Column(Float)
+    deducted_net_profit = Column(Float, comment="扣除非经常性损益后的净利润")
     #: 每股收益
     #: 基本每股收益
-    eps = Column(Float)
+    eps = Column(Float, comment="基本每股收益")
     #: 稀释每股收益
-    diluted_eps = Column(Float)
+    diluted_eps = Column(Float, comment="稀释每股收益")
     #: 其他综合收益
-    other_comprehensive_income = Column(Float)
+    other_comprehensive_income = Column(Float, comment="其他综合收益")
     #: 归属于母公司股东的其他综合收益
-    other_comprehensive_income_as_parent = Column(Float)
+    other_comprehensive_income_as_parent = Column(Float, comment="归属于母公司股东的其他综合收益")
     #: 归属于少数股东的其他综合收益
-    other_comprehensive_income_as_minority_interest = Column(Float)
+    other_comprehensive_income_as_minority_interest = Column(Float, comment="归属于少数股东的其他综合收益")
     #: 综合收益总额
-    total_comprehensive_income = Column(Float)
+    total_comprehensive_income = Column(Float, comment="综合收益总额")
     #: 归属于母公司所有者的综合收益总额
-    total_comprehensive_income_as_parent = Column(Float)
+    total_comprehensive_income_as_parent = Column(Float, comment="归属于母公司所有者的综合收益总额")
     #: 归属于少数股东的综合收益总额
-    total_comprehensive_income_as_minority_interest = Column(Float)
+    total_comprehensive_income_as_minority_interest = Column(Float, comment="归属于少数股东的综合收益总额")
 
     #: 银行相关
     #: 利息净收入
@@ -641,106 +641,106 @@ class CashFlowStatement(FinanceBase, Mixin):
     #: 经营活动产生的现金流量
     #
     #: 销售商品、提供劳务收到的现金
-    cash_from_selling = Column(Float)
+    cash_from_selling = Column(Float, comment="销售商品、提供劳务收到的现金")
 
     #: 收到的税费返还
-    tax_refund = Column(Float)
+    tax_refund = Column(Float, comment="收到的税费返还")
 
     #: 收到其他与经营活动有关的现金
-    cash_from_other_op = Column(Float)
+    cash_from_other_op = Column(Float, comment="收到其他与经营活动有关的现金")
 
     #: 经营活动现金流入小计
-    total_op_cash_inflows = Column(Float)
+    total_op_cash_inflows = Column(Float, comment="经营活动现金流入小计")
 
     #: 购买商品、接受劳务支付的现金
-    cash_to_goods_services = Column(Float)
+    cash_to_goods_services = Column(Float, comment="购买商品、接受劳务支付的现金")
     #: 支付给职工以及为职工支付的现金
-    cash_to_employees = Column(Float)
+    cash_to_employees = Column(Float, comment="支付给职工以及为职工支付的现金")
     #: 支付的各项税费
-    taxes_and_surcharges = Column(Float)
+    taxes_and_surcharges = Column(Float, comment="支付的各项税费")
     #: 支付其他与经营活动有关的现金
-    cash_to_other_related_op = Column(Float)
+    cash_to_other_related_op = Column(Float, comment="支付其他与经营活动有关的现金")
     #: 经营活动现金流出小计
-    total_op_cash_outflows = Column(Float)
+    total_op_cash_outflows = Column(Float, comment="经营活动现金流出小计")
 
     #: 经营活动产生的现金流量净额
-    net_op_cash_flows = Column(Float)
+    net_op_cash_flows = Column(Float, comment="经营活动产生的现金流量净额")
 
     #: 投资活动产生的现金流量
 
     #: 收回投资收到的现金
-    cash_from_disposal_of_investments = Column(Float)
+    cash_from_disposal_of_investments = Column(Float, comment="收回投资收到的现金")
     #: 取得投资收益收到的现金
-    cash_from_returns_on_investments = Column(Float)
+    cash_from_returns_on_investments = Column(Float, comment="取得投资收益收到的现金")
     #: 处置固定资产、无形资产和其他长期资产收回的现金净额
-    cash_from_disposal_fixed_intangible_assets = Column(Float)
+    cash_from_disposal_fixed_intangible_assets = Column(Float, comment="处置固定资产、无形资产和其他长期资产收回的现金净额")
     #: 处置子公司及其他营业单位收到的现金净额
-    cash_from_disposal_subsidiaries = Column(Float)
+    cash_from_disposal_subsidiaries = Column(Float, comment="处置子公司及其他营业单位收到的现金净额")
 
     #: 收到其他与投资活动有关的现金
-    cash_from_other_investing = Column(Float)
+    cash_from_other_investing = Column(Float, comment="收到其他与投资活动有关的现金")
 
     #: 投资活动现金流入小计
-    total_investing_cash_inflows = Column(Float)
+    total_investing_cash_inflows = Column(Float, comment="投资活动现金流入小计")
 
     #: 购建固定资产、无形资产和其他长期资产支付的现金
-    cash_to_acquire_fixed_intangible_assets = Column(Float)
+    cash_to_acquire_fixed_intangible_assets = Column(Float, comment="购建固定资产、无形资产和其他长期资产支付的现金")
     #: 投资支付的现金
-    cash_to_investments = Column(Float)
+    cash_to_investments = Column(Float, comment="投资支付的现金")
 
     #: 取得子公司及其他营业单位支付的现金净额
-    cash_to_acquire_subsidiaries = Column(Float)
+    cash_to_acquire_subsidiaries = Column(Float, comment="取得子公司及其他营业单位支付的现金净额")
 
     #: 支付其他与投资活动有关的现金
-    cash_to_other_investing = Column(Float)
+    cash_to_other_investing = Column(Float, comment="支付其他与投资活动有关的现金")
 
     #: 投资活动现金流出小计
-    total_investing_cash_outflows = Column(Float)
+    total_investing_cash_outflows = Column(Float, comment="投资活动现金流出小计")
 
     #: 投资活动产生的现金流量净额
-    net_investing_cash_flows = Column(Float)
+    net_investing_cash_flows = Column(Float, comment="投资活动产生的现金流量净额")
 
     #: 筹资活动产生的现金流量
     #
     #: 吸收投资收到的现金
-    cash_from_accepting_investment = Column(Float)
+    cash_from_accepting_investment = Column(Float, comment="吸收投资收到的现金")
     #: 子公司吸收少数股东投资收到的现金
-    cash_from_subsidiaries_accepting_minority_interest = Column(Float)
+    cash_from_subsidiaries_accepting_minority_interest = Column(Float, comment="子公司吸收少数股东投资收到的现金")
 
     #: 取得借款收到的现金
-    cash_from_borrowings = Column(Float)
+    cash_from_borrowings = Column(Float, comment="取得借款收到的现金")
     #: 发行债券收到的现金
-    cash_from_issuing_bonds = Column(Float)
+    cash_from_issuing_bonds = Column(Float, comment="发行债券收到的现金")
     #: 收到其他与筹资活动有关的现金
-    cash_from_other_financing = Column(Float)
+    cash_from_other_financing = Column(Float, comment="收到其他与筹资活动有关的现金")
 
     #: 筹资活动现金流入小计
-    total_financing_cash_inflows = Column(Float)
+    total_financing_cash_inflows = Column(Float, comment="筹资活动现金流入小计")
 
     #: 偿还债务支付的现金
-    cash_to_repay_borrowings = Column(Float)
+    cash_to_repay_borrowings = Column(Float, comment="偿还债务支付的现金")
 
     #: 分配股利、利润或偿付利息支付的现金
-    cash_to_pay_interest_dividend = Column(Float)
+    cash_to_pay_interest_dividend = Column(Float, comment="分配股利、利润或偿付利息支付的现金")
 
     #: 子公司支付给少数股东的股利、利润
-    cash_to_pay_subsidiaries_minority_interest = Column(Float)
+    cash_to_pay_subsidiaries_minority_interest = Column(Float, comment="子公司支付给少数股东的股利、利润")
 
     #: 支付其他与筹资活动有关的现金
-    cash_to_other_financing = Column(Float)
+    cash_to_other_financing = Column(Float, comment="支付其他与筹资活动有关的现金")
     #: 筹资活动现金流出小计
-    total_financing_cash_outflows = Column(Float)
+    total_financing_cash_outflows = Column(Float, comment="筹资活动现金流出小计")
 
     #: 筹资活动产生的现金流量净额
-    net_financing_cash_flows = Column(Float)
+    net_financing_cash_flows = Column(Float, comment="筹资活动产生的现金流量净额")
     #: 汇率变动对现金及现金等价物的影响
-    foreign_exchange_rate_effect = Column(Float)
+    foreign_exchange_rate_effect = Column(Float, comment="汇率变动对现金及现金等价物的影响")
     #: 现金及现金等价物净增加额
-    net_cash_increase = Column(Float)
+    net_cash_increase = Column(Float, comment="现金及现金等价物净增加额")
     #: 加: 期初现金及现金等价物余额
-    cash_at_beginning = Column(Float)
+    cash_at_beginning = Column(Float, comment="期初现金及现金等价物余额")
     #: 期末现金及现金等价物余额
-    cash = Column(Float)
+    cash = Column(Float, comment="期末现金及现金等价物余额")
 
     #: 银行相关
     #: 客户存款和同业及其他金融机构存放款项净增加额
@@ -983,7 +983,7 @@ class FinanceFactor(FinanceBase, Mixin):
     broker_self_operated_fixed_income_securities_net_capital_ratio = Column(Float)
 
 
-register_schema(providers=["eastmoney"], db_name="finance", schema_base=FinanceBase, entity_type="stock")
+register_schema(providers=["eastmoney", "xysz"], db_name="finance", schema_base=FinanceBase, entity_type="stock")
 
 
 # the __all__ is generated

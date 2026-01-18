@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+财务报表数据同步器
+主要功能：同步上市公司的财务指标、资产负债表、利润表及现金流量表。
+数据源：默认 East Money (EM)
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

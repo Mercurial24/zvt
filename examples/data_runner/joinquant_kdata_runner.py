@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+聚宽行情数据同步器 (JoinQuant)
+主要功能：利用聚宽接口同步 A 股标的、交易日以及高质量的后复权 K 线数据。
+数据源：JoinQuant
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

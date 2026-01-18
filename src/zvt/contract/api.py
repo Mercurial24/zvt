@@ -9,6 +9,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy import func, exists, and_
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import DeclarativeMeta
 from sqlalchemy.orm import Query
 from sqlalchemy.orm import sessionmaker, Session
@@ -54,7 +55,10 @@ def get_db_engine(
     provider_path = os.path.join(data_path, provider)
     if not os.path.exists(provider_path):
         os.makedirs(provider_path)
-    db_path = os.path.join(provider_path, "{}_{}.db?check_same_thread=False".format(provider, db_name))
+    db_path = os.path.join(
+        provider_path,
+        "{}_{}.db?check_same_thread=False&timeout=30".format(provider, db_name),
+    )
 
     engine_key = "{}_{}".format(provider, db_name)
     db_engine = zvt_context.db_engine_map.get(engine_key)
@@ -126,11 +130,12 @@ def get_db_session_factory(provider: str, db_name: str = None, data_schema: obje
         db_name = _get_db_name(data_schema=data_schema)
 
     session_key = "{}_{}".format(provider, db_name)
-    session = zvt_context.db_session_map.get(session_key)
-    if not session:
-        session = sessionmaker()
-        zvt_context.db_session_map[session_key] = session
-    return session
+    session_factory = zvt_context.db_session_map.get(session_key)
+    if not session_factory:
+        engine = get_db_engine(provider=provider, db_name=db_name)
+        session_factory = sessionmaker(bind=engine)
+        zvt_context.db_session_map[session_key] = session_factory
+    return session_factory
 
 
 DBSession = get_db_session_factory
@@ -379,7 +384,8 @@ def get_data(
     )
 
     if return_type == "df":
-        df = pd.read_sql(query.statement, query.session.bind)
+        engine = get_db_engine(provider=provider, data_schema=data_schema)
+        df = pd.read_sql(query.statement, engine)
         if pd_is_not_null(df):
             if index:
                 df = index_df(df, index=index, drop=drop_index_col, time_field=time_field)
@@ -434,7 +440,8 @@ def get_group(provider, data_schema, column, group_func=func.count, session=None
         query = session.query(column, group_func(column)).group_by(column)
     else:
         query = session.query(column).group_by(column)
-    df = pd.read_sql(query.statement, query.session.bind)
+    engine = get_db_engine(provider=provider, data_schema=data_schema)
+    df = pd.read_sql(query.statement, engine)
     return df
 
 
@@ -554,13 +561,19 @@ def df_to_db(
 
                 session.execute(sql)
             else:
-                current = get_data(
-                    session=session,
-                    data_schema=data_schema,
-                    columns=[data_schema.id],
-                    provider=provider,
-                    ids=df_current["id"].tolist(),
-                )
+                try:
+                    current = get_data(
+                        session=session,
+                        data_schema=data_schema,
+                        columns=[data_schema.id],
+                        provider=provider,
+                        ids=df_current["id"].tolist(),
+                    )
+                except OperationalError as e:
+                    if "no such table" in str(e).lower():
+                        current = None
+                    else:
+                        raise
                 if pd_is_not_null(current):
                     df_current = df_current[~df_current["id"].isin(current["id"])]
 

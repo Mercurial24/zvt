@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import time
+from tqdm import tqdm
 import uuid
 from typing import List
 
@@ -417,7 +418,15 @@ class TimeSeriesDataRecorder(EntityEventRecorder):
         raising_exception = None
         while True:
             count = len(unfinished_items)
-            for index, entity_item in enumerate(unfinished_items):
+            schema_name = self.data_schema.__name__ if self.data_schema else self.__class__.__name__
+            pbar = tqdm(
+                enumerate(unfinished_items),
+                total=count,
+                desc=schema_name,
+                unit="entity",
+                dynamic_ncols=True,
+            )
+            for index, entity_item in pbar:
                 try:
                     self.logger.info(f"run to {index + 1}/{count}")
 
@@ -438,6 +447,9 @@ class TimeSeriesDataRecorder(EntityEventRecorder):
                                 entity_item.id, start_timestamp, end_timestamp, size, timestamps
                             )
                         )
+
+                    # update progress bar description with current entity code
+                    pbar.set_postfix_str(entity_item.code if hasattr(entity_item, 'code') else entity_item.id)
 
                     #: no more to record
                     if size == 0:
@@ -534,6 +546,7 @@ class TimeSeriesDataRecorder(EntityEventRecorder):
                     finished_items = unfinished_items
                     break
 
+            pbar.close()
             unfinished_items = set(unfinished_items) - set(finished_items)
 
             if len(unfinished_items) == 0:

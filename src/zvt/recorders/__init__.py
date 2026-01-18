@@ -120,3 +120,9 @@ from .sina import *
 from .sina import __all__ as _sina_all
 
 __all__ += _sina_all
+
+# import all from submodule xysz
+from .xysz import *
+from .xysz import __all__ as _xysz_all
+
+__all__ += _xysz_all

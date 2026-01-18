@@ -3,7 +3,9 @@ import logging
 import time
 
 import pandas as pd
-from xtquant import xtdata
+from zvt.broker.qmt.qmt_remote import xtdata
+
+
 
 from zvt import init_log
 from zvt.broker.qmt.qmt_quote import get_qmt_stocks

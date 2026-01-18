@@ -88,11 +88,14 @@ def get_kdata_schema(
     if type(level) == str:
         level = IntervalLevel(level)
     if type(adjust_type) == str:
-        adjust_type = AdjustType(adjust_type)
+        if adjust_type == 'none':
+            adjust_type = None
+        else:
+            adjust_type = AdjustType(adjust_type)
 
     # kdata schema rule
     # name:{entity_type.capitalize()}{IntervalLevel.value.capitalize()}Kdata
-    if adjust_type and (adjust_type != AdjustType.qfq):
+    if adjust_type and (adjust_type != AdjustType.qfq) and (adjust_type != AdjustType.bfq):
         schema_str = "{}{}{}Kdata".format(
             entity_type.capitalize(),
             level.value.capitalize(),

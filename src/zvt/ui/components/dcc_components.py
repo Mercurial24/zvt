@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from dash import dcc
-
 from zvt.api.kdata import get_kdata_schema
 from zvt.contract import zvt_context
 from zvt.contract.api import decode_entity_id
@@ -52,20 +50,14 @@ def get_trading_signals_figure(
         df["value"] = df["order_price"]
         df["flag"] = df["order_type"].apply(lambda x: order_type_flag(x))
         df["color"] = df["order_type"].apply(lambda x: order_type_color(x))
-    print(df.tail())
 
     drawer = Drawer(main_df=kdata_reader.data_df, annotation_df=df)
     return drawer.draw_kline(show=False, height=800)
 
 
 def get_account_stats_figure(account_stats_reader: AccountStatsReader):
-    graph_list = []
-
-    # 账户统计曲线
+    """返回账户统计的 Plotly figure 对象，若无数据则返回 None。"""
     if account_stats_reader:
         fig = account_stats_reader.draw_line(show=False)
-
-        for trader_name in account_stats_reader.trader_names:
-            graph_list.append(dcc.Graph(id="{}-account".format(trader_name), figure=fig))
-
-    return graph_list
+        return fig
+    return None

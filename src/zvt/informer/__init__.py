@@ -11,3 +11,9 @@ from .informer import *
 from .informer import __all__ as _informer_all
 
 __all__ += _informer_all
+
+# import all from submodule wechat_webhook
+from .wechat_webhook import *
+from .wechat_webhook import __all__ as _wechat_webhook_all
+
+__all__ += _wechat_webhook_all

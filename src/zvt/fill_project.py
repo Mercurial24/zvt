@@ -12,7 +12,7 @@ def gen_kdata_schemas():
     # A股行情
     gen_kdata_schema(
         pkg="zvt",
-        providers=["em", "qmt", "joinquant"],
+        providers=["em", "qmt", "joinquant", "xysz"],
         entity_type="stock",
         levels=[
             level for level in IntervalLevel if level not in (IntervalLevel.LEVEL_L2_QUOTE, IntervalLevel.LEVEL_TICK)

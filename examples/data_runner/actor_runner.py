@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+市场参与者数据同步器
+主要功能：同步上市公司持仓机构、前十大流通股东以及市场参与者概况数据。
+数据源：默认 East Money (EM)
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

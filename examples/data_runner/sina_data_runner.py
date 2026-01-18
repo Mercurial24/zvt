@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+新浪数据同步器 (Sina)
+主要功能：利用新浪接口同步板块信息以及板块资金流向数据。
+数据源：Sina
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

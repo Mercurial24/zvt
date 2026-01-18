@@ -103,6 +103,33 @@ class BaseQmtKdataRecorder(FixedCycleDataRecorder):
             filters=self.entity_filters,
         )
 
+    def evaluate_start_end_size_timestamps(self, entity):
+        start, end, size, timestamps = super().evaluate_start_end_size_timestamps(entity)
+        if size > 0 and not self.real_time:
+            now = pd.Timestamp.now()
+            # 日线在库中已经有“今天”时，不需要再请求一次同日数据。
+            # FixedCycleDataRecorder 的 size 计算包含起点，latest=today 会得到 size=1。
+            if start and start.date() >= now.date():
+                return start, end, 0, timestamps
+            
+            # 处理周末和周一早上的情况，避免这些时候再去重复请求
+            if now.dayofweek == 5:  # 周六
+                if start and start.date() >= (now.date() - pd.Timedelta(days=1)): # 最新的应该是周五
+                    return start, end, 0, timestamps
+            elif now.dayofweek == 6:  # 周日
+                if start and start.date() >= (now.date() - pd.Timedelta(days=2)): # 最新的应该是周五
+                    return start, end, 0, timestamps
+            elif now.dayofweek == 0 and now.hour < 16:  # 周一 16点前
+                if start and start.date() >= (now.date() - pd.Timedelta(days=3)): # 最新的应该是周五
+                    return start, end, 0, timestamps
+            else:
+                if now.hour < 16: # 其他工作日 16点前
+                    # 如果还没到 16 点，且最新数据已经是昨天或之后，则认为不需要更新
+                    if start and start.date() >= (now.date() - pd.Timedelta(days=1)):
+                        return start, end, 0, timestamps
+                        
+        return start, end, size, timestamps
+
     def record(self, entity, start, end, size, timestamps):
         if start and (self.level == IntervalLevel.LEVEL_1DAY):
             start = start.date()

@@ -5,7 +5,7 @@ from pathlib import Path
 # zvt home dir
 ZVT_HOME = os.environ.get("ZVT_HOME")
 if not ZVT_HOME:
-    ZVT_HOME = os.path.abspath(os.path.join(Path.home(), "zvt-home"))
+    ZVT_HOME = "/data/code/zvt/zvt-home"
 
 # data for testing
 ZVT_TEST_HOME = os.path.abspath(os.path.join(Path.home(), "zvt-test-home"))

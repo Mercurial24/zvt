@@ -46,23 +46,29 @@ class BollFactor(TechnicalFactor):
 
 
 if __name__ == "__main__":
-    from zvt.domain import Stock1dHfqKdata
+    from zvt.domain import Stock1dKdata
+    from zvt.contract import IntervalLevel
+    from zvt.contract.api import get_entity_ids
+    from zvt.contract import AdjustType
 
-    provider = "em"
-    entity_ids = ["stock_sz_000338", "stock_sh_601318"]
-    Stock1dHfqKdata.record_data(entity_ids=entity_ids, provider=provider)
-    factor = BollFactor(
-        entity_ids=entity_ids, provider=provider, entity_provider=provider, start_timestamp="2019-01-01"
-    )
-    factor.draw(show=True)
+    # r = xyszStockKdataRecorder(force_update=True)
+    # r.run()
 
-    from zvt.domain import Stock30mHfqKdata
-
-    provider = "em"
-    entity_ids = ["stock_sz_000338", "stock_sh_601318"]
-
-    Stock30mHfqKdata.record_data(entity_ids=entity_ids, provider=provider)
-    factor = BollFactor(
-        entity_ids=entity_ids, provider=provider, entity_provider=provider, start_timestamp="2021-01-01"
-    )
-    factor.draw(show=True)
+    entity_ids = get_entity_ids(provider="xysz", entity_type="stock", codes=["002594", "002581"])
+    print(f"Entity IDs found: {entity_ids}")
+    
+    if not entity_ids:
+        print("No entities found for xysz source. Please run recorders first.")
+    else:
+        factor = BollFactor(
+            entity_ids=entity_ids,
+            provider="xysz",
+            level=IntervalLevel.LEVEL_1DAY,
+            start_timestamp="2022-01-01",
+            end_timestamp="2023-01-01",
+            adjust_type=AdjustType.qfq
+        )
+        if factor.factor_df is not None and not factor.factor_df.empty:
+            factor.draw(show=True)
+        else:
+            print("No data found for the specified period and provider.")

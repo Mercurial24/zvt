@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+指数数据同步器
+主要功能：同步指数本体、指数成份股以及重要指数的日线 K 线数据。
+数据源：默认 Exchange/EM
+"""
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler

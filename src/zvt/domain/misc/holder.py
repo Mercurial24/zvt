@@ -93,8 +93,25 @@ class InstitutionalInvestorHolder(HolderBase, Mixin):
     shareholding_ratio = Column(Float)
 
 
-register_schema(providers=["eastmoney", "joinquant"], db_name="holder", schema_base=HolderBase, entity_type="stock")
+class HolderNum(HolderBase, Mixin):
+    """股东户数：每只股票在统计截止日的 A 股股东户数等。"""
+
+    __tablename__ = "holder_num"
+
+    provider = Column(String(length=32))
+    code = Column(String(length=32))
+
+    report_period = Column(String(length=32))
+    report_date = Column(DateTime)
+
+    #: A 股股东户数
+    holder_num = Column(Float)
+    #: 总股东户数（若有）
+    total_holder_num = Column(Float)
+
+
+register_schema(providers=["eastmoney", "joinquant", "xysz"], db_name="holder", schema_base=HolderBase, entity_type="stock")
 
 
 # the __all__ is generated
-__all__ = ["HkHolder", "TopTenTradableHolder", "TopTenHolder", "InstitutionalInvestorHolder"]
+__all__ = ["HkHolder", "TopTenTradableHolder", "TopTenHolder", "InstitutionalInvestorHolder", "HolderNum"]

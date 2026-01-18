@@ -19,3 +19,9 @@ from .macro import *
 from .macro import __all__ as _macro_all
 
 __all__ += _macro_all
+
+# import all from submodule china_money_supply
+from .china_money_supply import *
+from .china_money_supply import __all__ as _china_money_supply_all
+
+__all__ += _china_money_supply_all
