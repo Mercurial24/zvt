@@ -29,7 +29,19 @@ from zvt.recorders.xysz.finance.xysz_finance_recorder import (
     xyszIncomeStatementRecorder, 
     xyszCashFlowRecorder
 )
+from zvt.recorders.xysz.finance.xysz_valuation_recorder import xyszValuationRecorder
 from zvt.recorders.akshare.macro.china_money_supply_recorder import ChinaMoneySupplyRecorder
+from zvt.recorders.qmt.meta.qmt_stock_meta_recorder import QMTStockRecorder
+from zvt.recorders.qmt.quotes.qmt_kdata_recorder import QMTStockKdataRecorder
+from zvt.recorders.qmt.index.qmt_index_recorder import QmtIndexRecorder
+from zvt.recorders.qmt.finance.qmt_finance_recorder import (
+    QmtBalanceSheetRecorder, 
+    QmtIncomeStatementRecorder, 
+    QmtCashFlowRecorder,
+    QmtValuationRecorder,
+)
+from zvt.consts import IMPORTANT_INDEX
+from zvt.contract import AdjustType
 from zvt.informer.wechat_webhook import WechatWebhookInformer
 from scripts.compute_xysz_hfq_kdata import compute_and_save_xysz_hfq
 
@@ -203,17 +215,27 @@ def run_daily_job():
     # 注：股票基础信息/板块/行业/货币供应量/复权因子 数据湖 import 脚本未实现，仅通过 API 拉取
     import pandas as pd
     tasks = [
-        # ("股票基础信息 (xysz)", xyszStockMetaRecorder),
-        # ("板块基础信息 (Akshare)", AkshareBlockRecorder),
-        # ("行业板块信息 (xysz)", xyszIndustryBlockRecorder),
-        # ("行业成分股映射 (xysz)", xyszIndustryBlockStockRecorder),
-        # ("中国货币供应量 (Akshare)", ChinaMoneySupplyRecorder),
-        # ("复权因子 (xysz)", xyszStockAdjFactorRecorder), # 已移除，改为直接从 parquet 读取以节省大量存储
+        ("股票基础信息 (xysz)", xyszStockMetaRecorder),
+        ("板块基础信息 (Akshare)", AkshareBlockRecorder),
+        ("行业板块信息 (xysz)", xyszIndustryBlockRecorder),
+        ("行业成分股映射 (xysz)", xyszIndustryBlockStockRecorder),
+        ("中国货币供应量 (Akshare)", ChinaMoneySupplyRecorder),
         # ("日线 K 线数据 (xysz)", lambda: xyszStockKdataRecorder(level='1d')),
         ("后复权日线 (xysz)", lambda: compute_and_save_xysz_hfq(start_timestamp=pd.Timestamp.now() - pd.Timedelta(days=15))),
-        # ("资产负债表 (xysz)", xyszBalanceSheetRecorder),
-        # ("利润表 (xysz)", xyszIncomeStatementRecorder),
-        # ("现金流量表 (xysz)", xyszCashFlowRecorder),
+        ("资产负债表 (xysz)", xyszBalanceSheetRecorder),
+        ("利润表 (xysz)", xyszIncomeStatementRecorder),
+        ("现金流量表 (xysz)", xyszCashFlowRecorder),
+        ("估值/市盈率 (xysz)", lambda: xyszValuationRecorder(sleeping_time=0)),
+        # QMT 数据更新任务
+        ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
+        ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
+        ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
+        ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
+        ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
+        ("QMT 日线 (不复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.bfq, sleeping_time=0.2, ignore_failed=True)),
+        ("QMT 日线 (后复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.hfq, sleeping_time=0.2, ignore_failed=True)),
+        ("QMT 估值", lambda: QmtValuationRecorder(sleeping_time=0)),
+
     ]
 
     for name, recorder_factory in tasks:

@@ -180,6 +180,22 @@ def get_kdata(
     return df
 
 
+def get_financial_data(
+    stock_list,
+    table_list=None,
+    start_time="",
+    end_time="",
+    report_type="report_time",
+):
+    return xtdata.get_financial_data(
+        stock_list=stock_list,
+        table_list=table_list,
+        start_time=start_time,
+        end_time=end_time,
+        report_type=report_type,
+    )
+
+
 def clear_history_quote(target_date=current_date()):
     session = get_db_session("qmt", data_schema=StockQuote)
     session.query(StockQuote).filter(StockQuote.timestamp < target_date).delete()
@@ -192,5 +208,6 @@ __all__ = [
     "get_qmt_stocks",
     "get_entity_list",
     "get_kdata",
+    "get_financial_data",
     "clear_history_quote",
 ]

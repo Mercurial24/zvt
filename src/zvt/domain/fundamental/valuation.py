@@ -62,7 +62,7 @@ class EtfValuation(ValuationBase, Mixin):
     pcf1 = Column(Float)
 
 
-register_schema(providers=["joinquant", "xysz"], db_name="valuation", schema_base=ValuationBase, entity_type="stock")
+register_schema(providers=["joinquant", "xysz", "qmt"], db_name="valuation", schema_base=ValuationBase, entity_type="stock")
 
 
 # the __all__ is generated

@@ -1,4 +1,3 @@
-import dash_bootstrap_components as dbc
 from dash import dcc, html
 from dash.dependencies import Input, Output
 import logging
@@ -8,39 +7,14 @@ from zvt.ui.apps import factor_app
 
 logger = logging.getLogger(__name__)
 
-# Sidebar styling
-SIDEBAR_STYLE = {
-    "position": "fixed",
-    "top": 0,
-    "left": 0,
-    "bottom": 0,
-    "width": "16rem",
-    "padding": "2rem 1rem",
-    "backgroundColor": "#222222",
-}
-
-# Content styling
+# Content styling（全宽，无左侧导航栏）
 CONTENT_STYLE = {
-    "marginLeft": "18rem",
+    "marginLeft": "2rem",
     "marginRight": "2rem",
     "padding": "2rem 1rem",
 }
 
 def serve_layout():
-    sidebar = html.Div(
-        [
-            html.P("ZVT 量化平台", className="lead", style={"color": "darkgray", "textAlign": "center"}),
-            dbc.Nav(
-                [
-                    dbc.NavLink("因子分析", href="/", active="exact"),
-                ],
-                vertical=True,
-                pills=True,
-            ),
-        ],
-        style=SIDEBAR_STYLE,
-    )
-
     content = html.Div(
         id="page-content",
         style=CONTENT_STYLE,
@@ -50,7 +24,6 @@ def serve_layout():
     layout = html.Div(
         [
             dcc.Location(id="url"),
-            sidebar,
             content
         ]
     )

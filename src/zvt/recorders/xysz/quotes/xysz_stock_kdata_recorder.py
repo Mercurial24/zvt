@@ -160,6 +160,7 @@ class xyszStockKdataRecorder(FixedCycleDataRecorder):
             "VOLUME": "volume", "VOL": "volume",
             "TURNOVER": "turnover", "AMOUNT": "turnover", # Map amount to turnover as per ZVT schema
             "CHANGE_PCT": "change_pct",
+            "TURNOVER_RATE": "turnover_rate",
         }
         cols_upper = {c.upper(): c for c in df.columns}
         rename_dict = {}

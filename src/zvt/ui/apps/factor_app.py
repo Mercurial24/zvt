@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import List
 
+import pandas as pd
 import dash_daq as daq
 import dash_bootstrap_components as dbc
 from dash import dash, dcc, html
@@ -10,6 +11,8 @@ from zvt.contract import Mixin
 from zvt.contract import zvt_context, IntervalLevel, AdjustType
 from zvt.contract.api import get_entities, get_schema_by_name, get_schema_columns
 from zvt.contract.drawer import StackedDrawer
+from zvt.domain.meta.stock_meta import Stock, StockDetail
+from zvt.domain.fundamental.valuation import StockValuation
 from zvt.trader.trader_info_api import AccountStatsReader, OrderReader, get_order_securities
 from zvt.trader.trader_info_api import get_trader_info
 from zvt.trader.trader_schemas import TraderInfo
@@ -209,7 +212,7 @@ def factor_layout():
                                 className="bg-secondary shadow"
                             )
                         ],
-                        md=4, lg=3
+                        md=3, lg=2
                     ),
                     # Main Chart Area
                     dbc.Col(
@@ -220,7 +223,27 @@ def factor_layout():
                                 children=html.Div(id="factor-details")
                             )
                         ],
-                        md=8, lg=9
+                        md=6, lg=6
+                    ),
+                    # 右侧列：上方股票信息(stock_meta)，下方点击K线时点估值
+                    dbc.Col(
+                        [
+                            dbc.Card(
+                                [
+                                    dbc.CardHeader(html.H5("股票信息", className="m-0"), className="bg-dark text-light"),
+                                    dbc.CardBody(html.Div(id="stock-meta-container", children=[html.P("选择实体标的后显示。", className="text-muted")])),
+                                ],
+                                className="mb-3 shadow",
+                            ),
+                            dbc.Card(
+                                [
+                                    dbc.CardHeader(html.H5("该时点估值", className="m-0"), className="bg-dark text-light"),
+                                    dbc.CardBody(html.Div(id="valuation-at-point-container", children=[html.P("点击K线图上某点查看该日估值。", className="text-muted")])),
+                                ],
+                                className="shadow",
+                            ),
+                        ],
+                        md=3, lg=4
                     ),
                 ]
             )
@@ -351,6 +374,55 @@ def update_column_selector(schema_name):
 
 
 @zvt_app.callback(
+    Output("stock-meta-container", "children"),
+    [Input("entity-type-selector", "value"), Input("entity-provider-selector", "value"), Input("entity-selector", "value")],
+)
+def update_stock_meta(entity_type, entity_provider, entity):
+    """右侧栏上方：展示 stock_meta 中该股票的信息。仅当实体类型为 stock 且有选中标的时展示。"""
+    if entity_type != "stock" or not entity_provider or not entity:
+        return html.P("选择股票标的后显示。", className="text-muted")
+    try:
+        meta_cols = ["code", "name", "list_date", "float_cap", "total_cap", "controlling_holder", "top_ten_ratio"]
+        # index="entity_id" 时 get_entities 要求 entity_id 在 columns 中
+        query_cols = ["entity_id"] + meta_cols
+        df = get_entities(
+            provider=entity_provider,
+            entity_type="stock",
+            entity_id=entity,
+            columns=query_cols,
+            return_type="df",
+            index="entity_id",
+        )
+        if not pd_is_not_null(df) or df.empty:
+            return html.P("未查到该股票 meta。", className="text-muted")
+        row = df.iloc[0]
+        rows = []
+        for col in meta_cols:
+            if col not in row or pd.isna(row.get(col)):
+                continue
+            val = row[col]
+            if hasattr(val, "strftime"):
+                val = val.strftime("%Y-%m-%d") if val else ""
+            label = {"list_date": "上市日期", "float_cap": "流通市值", "total_cap": "总市值", "controlling_holder": "控股股东", "top_ten_ratio": "前十大股东占比"}.get(col, col)
+            rows.append(html.Tr([html.Td(label, className="text-secondary"), html.Td(str(val), className="text-light")]))
+        # 尝试补充 StockDetail：行业、概念等
+        try:
+            detail_df = StockDetail.query_data(provider=entity_provider, entity_id=entity, columns=["industries", "concept_indices", "main_business"], limit=1, return_type="df")
+            if pd_is_not_null(detail_df) and not detail_df.empty:
+                d = detail_df.iloc[0]
+                if pd_is_not_null(d.get("industries")):
+                    rows.append(html.Tr([html.Td("所属行业", className="text-secondary"), html.Td(str(d["industries"])[:200], className="text-light")]))
+                if pd_is_not_null(d.get("concept_indices")):
+                    rows.append(html.Tr([html.Td("概念板块", className="text-secondary"), html.Td(str(d["concept_indices"])[:200], className="text-light")]))
+        except Exception:
+            pass
+        return dbc.Table(rows, size="sm", bordered=True, dark=True, style={"fontSize": "12px"})
+    except Exception as e:
+        logger.exception("update_stock_meta error")
+        return html.P(f"加载失败: {e}", className="text-danger")
+
+
+@zvt_app.callback(
     Output("factor-details", "children"),
     [
         Input("factor-selector", "value"),
@@ -452,6 +524,83 @@ def update_factor_details(factor, entity_type, entity_provider, entity, levels, 
 
         # Apply dark theme styling
         fig.update_layout(template="plotly_dark", paper_bgcolor='#222222', plot_bgcolor='#222222')
-        return dcc.Graph(id=f"{factor}-{entity_type}-{entity}", figure=fig)
-        
+        # 固定 id 便于右侧栏“该时点估值”根据点击事件查询
+        graph_config = {"displayModeBar": False, "displaylogo": False}
+        return html.Div([
+            dcc.Graph(id="factor-kline-graph", figure=fig, config=graph_config)
+        ])
+
     raise dash.PreventUpdate()
+
+
+@zvt_app.callback(
+    Output("valuation-at-point-container", "children"),
+    [Input("factor-kline-graph", "clickData")],
+    [State("entity-type-selector", "value"), State("entity-selector", "value"), State("entity-provider-selector", "value")],
+)
+def update_valuation_at_point(click_data, entity_type, entity_id, entity_provider):
+    """右侧栏下方：点击 K 线图某点时，展示该时点的估值指标（仅股票）。只查当日，不查最近一条。"""
+    if entity_type != "stock" or not entity_id:
+        return html.P("选择股票后，点击K线图上某点查看该日估值。", className="text-muted")
+    if not click_data or "points" not in click_data or not click_data["points"]:
+        return html.P("点击K线图上某点查看该日估值。", className="text-muted")
+    try:
+        pt = click_data["points"][0]
+        x = pt.get("x")
+        if x is None:
+            return html.P("未获取到点击时间。", className="text-muted")
+        if isinstance(x, (int, float)):
+            ts = pd.Timestamp(x, unit="ms")
+        else:
+            ts = pd.Timestamp(str(x))
+        # 取当日 0 点，并用当日全天时间范围查询（避免 DB 存了非 0 点时间导致查不到）
+        ts = ts.normalize()
+        end_of_day = ts + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        val_df = None
+        # 优先用当前选的实体数据源，再试其他 valuation 的 provider
+        providers = getattr(StockValuation, "providers", ["xysz", "joinquant"])
+        if entity_provider and entity_provider in providers:
+            providers = [entity_provider] + [p for p in providers if p != entity_provider]
+        for prov in providers:
+            try:
+                val_df = StockValuation.query_data(
+                    provider=prov,
+                    entity_id=entity_id,
+                    start_timestamp=ts,
+                    end_timestamp=end_of_day,
+                    return_type="df",
+                )
+                if pd_is_not_null(val_df) and not val_df.empty:
+                    break
+            except Exception:
+                continue
+        if not pd_is_not_null(val_df) or val_df.empty:
+            return html.P(f"未找到 {ts.strftime('%Y-%m-%d')} 的估值数据。", className="text-muted")
+        row = val_df.iloc[0]
+        actual_ts = row.get("timestamp")
+        if hasattr(actual_ts, "strftime"):
+            date_str = actual_ts.strftime("%Y-%m-%d")
+        else:
+            date_str = pd.Timestamp(actual_ts).strftime("%Y-%m-%d") if actual_ts else ts.strftime("%Y-%m-%d")
+        cols = ["pe", "pe_ttm", "pb", "ps", "pcf", "market_cap", "circulating_market_cap", "turnover_ratio", "capitalization", "circulating_cap"]
+        labels = {"pe": "静态PE", "pe_ttm": "动态PE(TTM)", "pb": "市净率", "ps": "市销率", "pcf": "市现率", "market_cap": "总市值", "circulating_market_cap": "流通市值", "turnover_ratio": "换手率", "capitalization": "总股本", "circulating_cap": "流通股本"}
+
+        def _scalar_not_null(v):
+            """标量/单元格是否非空（pd_is_not_null 仅适用于 DataFrame/Series，对 numpy.float64 等会报 .empty 错误）"""
+            if v is None:
+                return False
+            try:
+                if pd.isna(v):
+                    return False
+            except (TypeError, ValueError):
+                pass
+            return True
+
+        rows = [html.Tr([html.Td(labels.get(c, c), className="text-secondary"), html.Td(str(round(row[c], 4)) if isinstance(row.get(c), (int, float)) else str(row.get(c, "")), className="text-light")]) for c in cols if c in row and _scalar_not_null(row.get(c))]
+        return html.Div([
+            html.P(f"日期: {date_str}", className="text-info small mb-2"),
+            dbc.Table(rows, size="sm", bordered=True, dark=True, style={"fontSize": "12px"}),
+        ])
+    except Exception as e:
+        logger.exception("update_valuation_at_point error")
+        return html.P(f"加载失败: {e}", className="text-danger")

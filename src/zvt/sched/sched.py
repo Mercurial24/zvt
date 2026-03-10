@@ -24,15 +24,13 @@ zvt_scheduler = BackgroundScheduler(jobstores=jobstores, executors=executors, jo
 def sched_tasks():
     import platform
 
-    if platform.system() == "Windows":
-        try:
-            from zvt.broker.qmt.qmt_quote import record_stock_quote
 
-            zvt_scheduler.add_job(func=record_stock_quote, trigger="cron", hour=9, minute=19, day_of_week="mon-fri")
-        except Exception as e:
-            logger.error("QMT not work", e)
-    else:
-        logger.warning("QMT need run in Windows!")
+    try:
+        from zvt.broker.qmt.qmt_quote import record_stock_quote
+
+        zvt_scheduler.add_job(func=record_stock_quote, trigger="cron", hour=9, minute=19, day_of_week="mon-fri")
+    except Exception as e:
+        logger.error("QMT not work", e)
 
     zvt_scheduler.start()
 

@@ -237,13 +237,11 @@ import zvt.factors as zvt_factors
 
 import platform
 
-if platform.system() == "Windows":
-    try:
-        import zvt.recorders.qmt as qmt_recorder
-    except Exception as e:
-        logger.error("QMT not work", e)
-else:
-    logger.warning("QMT need run in Windows!")
+try:
+    import zvt.recorders.qmt as qmt_recorder
+except Exception as e:
+    logger.error("QMT not work", e)
+
 
 
 __all__ = ["zvt_env", "zvt_config", "init_log", "init_env", "init_config", "__version__"]
