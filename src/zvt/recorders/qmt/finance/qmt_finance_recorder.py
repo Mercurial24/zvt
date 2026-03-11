@@ -419,7 +419,7 @@ class QmtValuationRecorder(FixedCycleDataRecorder):
         income_df = IncomeStatement.query_data(
             entity_id=entity_id,
             provider="qmt",
-            columns=["report_period", "net_profit_as_parent", "operating_income"],
+            columns=["timestamp", "report_period", "net_profit_as_parent", "operating_income"],
         )
         if income_df is None or income_df.empty:
             self.logger.warning(f"No qmt income data for {entity_id}")
@@ -428,7 +428,7 @@ class QmtValuationRecorder(FixedCycleDataRecorder):
         balance_df = BalanceSheet.query_data(
             entity_id=entity_id,
             provider="qmt",
-            columns=["report_period", "equity"],
+            columns=["timestamp", "report_period", "equity"],
         )
         if balance_df is None or balance_df.empty:
             self.logger.warning(f"No qmt balance data for {entity_id}")
@@ -437,145 +437,119 @@ class QmtValuationRecorder(FixedCycleDataRecorder):
         cashflow_df = CashFlowStatement.query_data(
             entity_id=entity_id,
             provider="qmt",
-            columns=["report_period", "net_op_cash_flows"],
+            columns=["timestamp", "report_period", "net_op_cash_flows"],
         )
         if cashflow_df is None or cashflow_df.empty:
-            cashflow_df = pd.DataFrame(columns=["report_period", "net_op_cash_flows"])
+            cashflow_df = pd.DataFrame(columns=["timestamp", "report_period", "net_op_cash_flows"])
 
         capital_df = self._get_capital_df(entity)
 
+        # --- 预处理与基本同步 ---
         kdata_df = kdata_df.copy()
         income_df = income_df.copy()
         balance_df = balance_df.copy()
         cashflow_df = cashflow_df.copy()
 
+        # 核心：使用公告日 (timestamp) 作为合并键
         if "timestamp" in kdata_df.columns:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df["timestamp"])
+            kdata_df["ts_merge"] = pd.to_datetime(kdata_df["timestamp"]).dt.normalize()
         else:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df.index.get_level_values("timestamp"))
-        kdata_df["ts_merge"] = kdata_df["ts_merge"].dt.normalize()
+            kdata_df["ts_merge"] = pd.to_datetime(kdata_df.index.get_level_values("timestamp")).dt.normalize()
 
-        income_df["ts_merge"] = pd.to_datetime(income_df["report_period"])
-        balance_df["ts_merge"] = pd.to_datetime(balance_df["report_period"])
-        cashflow_df["ts_merge"] = pd.to_datetime(cashflow_df["report_period"])
+        income_df["ts_merge"] = pd.to_datetime(income_df["timestamp"]).dt.normalize()
+        balance_df["ts_merge"] = pd.to_datetime(balance_df["timestamp"]).dt.normalize()
+        cashflow_df["ts_merge"] = pd.to_datetime(cashflow_df["timestamp"]).dt.normalize()
+
+        kdata_df = kdata_df.dropna(subset=["ts_merge"]).sort_values("ts_merge")
+        income_df = income_df.dropna(subset=["ts_merge"]).sort_values("ts_merge")
+        balance_df = balance_df.dropna(subset=["ts_merge"]).sort_values("ts_merge")
+        cashflow_df = cashflow_df.dropna(subset=["ts_merge"]).sort_values("ts_merge")
+
         if not capital_df.empty:
-            capital_df["ts_merge"] = pd.to_datetime(capital_df["ts_merge"])
+            capital_df = capital_df.copy()
+            capital_df["ts_merge"] = pd.to_datetime(capital_df["ts_merge"]).dt.normalize()
+            capital_df = capital_df.dropna(subset=["ts_merge"]).sort_values("ts_merge")
 
-        kdata_df = kdata_df.sort_values("ts_merge")
-        income_df = income_df.sort_values("ts_merge")
-        balance_df = balance_df.sort_values("ts_merge")
-        cashflow_df = cashflow_df.sort_values("ts_merge")
-        if not capital_df.empty:
-            capital_df = capital_df.sort_values("ts_merge")
+        def compute_ttm_col(df, col):
+            """计算 A 股财报（本年累计值）对应的 TTM。
+            TTM = 当前期累计 + (上年年报 - 上年同期累计)
+            """
+            work_df = df.copy().sort_values("report_period")
+            work_df["year"] = pd.to_datetime(work_df["report_period"]).dt.year
+            work_df["month"] = pd.to_datetime(work_df["report_period"]).dt.month
+            lookup = work_df.set_index(["year", "month"])[col].to_dict()
 
-        income_annual = income_df[income_df["ts_merge"].dt.month == 12][["ts_merge", "net_profit_as_parent"]].copy()
+            def get_ttm(row):
+                y, m = row["year"], row["month"]
+                if m == 12:
+                    return row[col]
+                prev_annual = lookup.get((y - 1, 12))
+                prev_ytd = lookup.get((y - 1, m))
+                if prev_annual is not None and prev_ytd is not None:
+                    return row[col] + prev_annual - prev_ytd
+                return np.nan
+
+            return work_df.apply(get_ttm, axis=1)
+
+        income_df["ttm_net_profit"] = compute_ttm_col(income_df, "net_profit_as_parent")
+        income_df["ttm_operating_income"] = compute_ttm_col(income_df, "operating_income")
+        cashflow_df["ttm_net_op_cash_flows"] = compute_ttm_col(cashflow_df, "net_op_cash_flows")
+
+
+        # 静态 PE 用年报
+        income_annual = income_df[pd.to_datetime(income_df["report_period"]).dt.month == 12][
+            ["ts_merge", "report_period", "net_profit_as_parent"]
+        ].copy()
         income_annual = income_annual.rename(columns={"net_profit_as_parent": "net_profit_annual"})
-        income_df["ttm_net_profit"] = income_df["net_profit_as_parent"].rolling(4, min_periods=4).sum()
 
-        df_merged = pd.merge_asof(
-            kdata_df,
-            income_df[["ts_merge", "net_profit_as_parent", "operating_income", "ttm_net_profit"]],
-            on="ts_merge",
-            direction="backward",
-        )
-        if not income_annual.empty:
-            df_merged = pd.merge_asof(
-                df_merged,
-                income_annual[["ts_merge", "net_profit_annual"]],
-                on="ts_merge",
-                direction="backward",
-            )
-        else:
-            df_merged["net_profit_annual"] = np.nan
 
-        df_merged = pd.merge_asof(
-            df_merged,
-            balance_df[["ts_merge", "equity"]],
-            on="ts_merge",
-            direction="backward",
-        )
-        df_merged = pd.merge_asof(
-            df_merged,
-            cashflow_df[["ts_merge", "net_op_cash_flows"]],
-            on="ts_merge",
-            direction="backward",
-        )
+        df_merged = pd.merge_asof(kdata_df.sort_values("ts_merge"), 
+                                  income_df[["ts_merge", "ttm_net_profit", "ttm_operating_income", "report_period"]].sort_values(["ts_merge", "report_period"]), 
+                                  on="ts_merge", direction="backward")
+        
+        df_merged = pd.merge_asof(df_merged, balance_df[["ts_merge", "equity"]].sort_values(["ts_merge"]), 
+                                  on="ts_merge", direction="backward")
+        
+        df_merged = pd.merge_asof(df_merged, cashflow_df[["ts_merge", "ttm_net_op_cash_flows"]].sort_values(["ts_merge"]), 
+                                  on="ts_merge", direction="backward")
+
         if not capital_df.empty:
-            df_merged = pd.merge_asof(
-                df_merged,
-                capital_df[["ts_merge", "capitalization", "circulating_cap"]],
-                on="ts_merge",
-                direction="backward",
-            )
-        else:
-            df_merged["capitalization"] = np.nan
-            df_merged["circulating_cap"] = np.nan
+            df_merged = pd.merge_asof(df_merged, capital_df[["ts_merge", "capitalization", "circulating_cap"]].sort_values(["ts_merge"]), 
+                                      on="ts_merge", direction="backward")
 
-        df_merged = df_merged.dropna(subset=["net_profit_as_parent", "capitalization"])
+        if not income_annual.empty:
+            df_merged = pd.merge_asof(df_merged, income_annual[["ts_merge", "net_profit_annual"]].sort_values(["ts_merge"]), 
+                                      on="ts_merge", direction="backward")
+
+        # 确保计算所需的列都存在
+        for col in ["capitalization", "circulating_cap", "net_profit_annual", "ttm_net_profit", "equity", "ttm_operating_income", "ttm_net_op_cash_flows"]:
+            if col not in df_merged.columns:
+                df_merged[col] = np.nan
+
+        df_merged = df_merged.dropna(subset=["capitalization", "close"])
         if df_merged.empty:
             self.logger.warning(f"Merged qmt valuation data is empty for {entity_id}")
             return
 
-        df_merged = df_merged[df_merged["capitalization"] > 0]
-        if df_merged.empty:
-            self.logger.warning(f"No valid capitalization for {entity_id}")
-            return
-
+        cap = pd.to_numeric(df_merged["capitalization"], errors="coerce").values
         close = df_merged["close"].values
-        capitalization = pd.to_numeric(df_merged["capitalization"], errors="coerce").values
-        circulating_cap = pd.to_numeric(df_merged["circulating_cap"], errors="coerce").values
-        equity = pd.to_numeric(df_merged["equity"], errors="coerce").values
-        operating_income = pd.to_numeric(df_merged["operating_income"], errors="coerce").values
-        net_op_cash = pd.to_numeric(df_merged["net_op_cash_flows"], errors="coerce").values
-        volume = pd.to_numeric(df_merged["volume"], errors="coerce").values
+        
+        # 1. PE 计算 (不再过滤负值)
+        df_merged["pe"] = np.round(close / (df_merged["net_profit_annual"] / cap), 2)
+        df_merged["pe_ttm"] = np.round(close / (df_merged["ttm_net_profit"] / cap), 2)
+        
+        # 2. 市值指标
+        df_merged["market_cap"] = close * cap
+        df_merged["circulating_market_cap"] = close * pd.to_numeric(df_merged["circulating_cap"], errors="coerce").values
+        df_merged["turnover_ratio"] = pd.to_numeric(df_merged["volume"], errors="coerce").values / pd.to_numeric(df_merged["circulating_cap"], errors="coerce").values
 
-        market_cap = close * capitalization
-        circulating_market_cap = np.where(
-            np.isfinite(circulating_cap) & (circulating_cap > 0),
-            close * circulating_cap,
-            np.nan,
-        )
-        turnover_ratio = np.where(
-            np.isfinite(circulating_cap) & (circulating_cap > 0),
-            volume / circulating_cap,
-            np.nan,
-        )
-
-        net_profit_annual = pd.to_numeric(df_merged["net_profit_annual"], errors="coerce").values
-        eps_annual = np.where(capitalization > 0, net_profit_annual / capitalization, np.nan)
-        pe_static = np.where(np.isfinite(eps_annual) & (eps_annual > 0), close / eps_annual, np.nan)
-
-        ttm_net_profit = pd.to_numeric(df_merged["ttm_net_profit"], errors="coerce").values
-        eps_ttm = np.where(capitalization > 0, ttm_net_profit / capitalization, np.nan)
-        pe_ttm = np.where(np.isfinite(eps_ttm) & (eps_ttm > 0), close / eps_ttm, np.nan)
-
-        pb = np.where(
-            np.isfinite(equity) & (equity > 0),
-            market_cap / equity,
-            np.nan,
-        )
-        ps = np.where(
-            np.isfinite(operating_income) & (operating_income > 0),
-            market_cap / operating_income,
-            np.nan,
-        )
-        pcf = np.where(
-            np.isfinite(net_op_cash) & (net_op_cash > 0),
-            market_cap / net_op_cash,
-            np.nan,
-        )
+        # 3. 其他倍数 (不再过滤负值)
+        df_merged["pb"] = np.round(df_merged["market_cap"] / pd.to_numeric(df_merged["equity"], errors="coerce"), 2)
+        df_merged["ps"] = np.round(df_merged["market_cap"] / pd.to_numeric(df_merged["ttm_operating_income"], errors="coerce"), 2)
+        df_merged["pcf"] = np.round(df_merged["market_cap"] / pd.to_numeric(df_merged["ttm_net_op_cash_flows"], errors="coerce"), 2)
 
         val_list = []
-        for _, row in df_merged.assign(
-            market_cap=market_cap,
-            circulating_market_cap=circulating_market_cap,
-            turnover_ratio=turnover_ratio,
-            pe=np.round(pe_static, 2),
-            pe_ttm=np.round(pe_ttm, 2),
-            pb=np.round(pb, 2),
-            ps=np.round(ps, 2),
-            pcf=np.round(pcf, 2),
-        ).iterrows():
+        for _, row in df_merged.iterrows():
             rec = {
                 "id": f"{entity_id}_{row['ts_merge'].strftime('%Y-%m-%d')}",
                 "entity_id": entity_id,

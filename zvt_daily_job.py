@@ -163,53 +163,53 @@ def run_daily_job():
     fail_count = 0
     summary = []
     
-    # # 阶段 1: 更新 Parquet 数据湖 (原始格式)
-    # try:
-    #     t0 = time.time()
-    #     stdout_text = run_legacy_daily_update()
-    #     elapsed = _format_elapsed(time.time() - t0)
-    #     logger.info("任务 Parquet 数据湖更新 执行成功。")
+    # 阶段 1: 更新 Parquet 数据湖 (原始格式)
+    try:
+        t0 = time.time()
+        stdout_text = run_legacy_daily_update()
+        elapsed = _format_elapsed(time.time() - t0)
+        logger.info("任务 Parquet 数据湖更新 执行成功。")
         
-    #     # 提取关键更新信息以发送至微信
-    #     detail_lines = []
-    #     for line in stdout_text.splitlines():
-    #         line = line.strip()
-    #         # 过滤包含重要执行结果的行（通常以 [模块名] 开头）
-    #         if line.startswith("[") and any(kw in line for kw in ["保存", "覆盖", "跳过", "合并"]):
-    #             # 排除部分纯过程打印
-    #             if "批次" in line and "已下载" in line:
-    #                 continue
-    #             detail_lines.append(f"    • {line}")
+        # 提取关键更新信息以发送至微信
+        detail_lines = []
+        for line in stdout_text.splitlines():
+            line = line.strip()
+            # 过滤包含重要执行结果的行（通常以 [模块名] 开头）
+            if line.startswith("[") and any(kw in line for kw in ["保存", "覆盖", "跳过", "合并"]):
+                # 排除部分纯过程打印
+                if "批次" in line and "已下载" in line:
+                    continue
+                detail_lines.append(f"    • {line}")
                 
-    #     summary.append(f"✅ Parquet 数据湖更新 ({elapsed})")
-    #     if detail_lines:
-    #         summary.extend(detail_lines)
+        summary.append(f"✅ Parquet 数据湖更新 ({elapsed})")
+        if detail_lines:
+            summary.extend(detail_lines)
             
-    #     success_count += 1
-    # except Exception as e:
-    #     elapsed = _format_elapsed(time.time() - t0)
-    #     error_msg = f"❌ Parquet 数据湖更新 失败 ({elapsed}): {str(e)}"
-    #     logger.error(error_msg)
-    #     logger.error(traceback.format_exc())
-    #     summary.append(error_msg)
-    #     fail_count += 1
+        success_count += 1
+    except Exception as e:
+        elapsed = _format_elapsed(time.time() - t0)
+        error_msg = f"❌ Parquet 数据湖更新 失败 ({elapsed}): {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        summary.append(error_msg)
+        fail_count += 1
 
-    # # 阶段 2: 更新 ZVT 数据库（先数据湖导入，再 API 补缺）
-    # # 2a: 从数据湖 Parquet 导入能导入的财务数据，避免重复下载和重复缓存 h5
-    # try:
-    #     t0 = time.time()
-    #     logger.info("正在执行: 数据湖→ZVT 导入 (klines_daily, 财务三表, holder_num, share_holder, dividend, right_issue, industry_base_info, industry_constituent)...")
-    #     ok = run_import_xysz_parquet_to_zvt()
-    #     elapsed = _format_elapsed(time.time() - t0)
-    #     if ok:
-    #         summary.append(f"✅ 数据湖→ZVT 导入 ({elapsed})")
-    #         success_count += 1
-    #     else:
-    #         summary.append(f"⚠️ 数据湖→ZVT 导入 跳过或失败 ({elapsed})")
-    # except Exception as e:
-    #     elapsed = _format_elapsed(time.time() - t0)
-    #     logger.exception("数据湖→ZVT 导入异常: %s", e)
-    #     summary.append(f"⚠️ 数据湖→ZVT 导入 异常 ({elapsed}): {e}")
+    # 阶段 2: 更新 ZVT 数据库（先数据湖导入，再 API 补缺）
+    # 2a: 从数据湖 Parquet 导入能导入的财务数据，避免重复下载和重复缓存 h5
+    try:
+        t0 = time.time()
+        logger.info("正在执行: 数据湖→ZVT 导入 (klines_daily, 财务三表, holder_num, share_holder, dividend, right_issue, industry_base_info, industry_constituent)...")
+        ok = run_import_xysz_parquet_to_zvt()
+        elapsed = _format_elapsed(time.time() - t0)
+        if ok:
+            summary.append(f"✅ 数据湖→ZVT 导入 ({elapsed})")
+            success_count += 1
+        else:
+            summary.append(f"⚠️ 数据湖→ZVT 导入 跳过或失败 ({elapsed})")
+    except Exception as e:
+        elapsed = _format_elapsed(time.time() - t0)
+        logger.exception("数据湖→ZVT 导入异常: %s", e)
+        summary.append(f"⚠️ 数据湖→ZVT 导入 异常 ({elapsed}): {e}")
 
     # 2b: 运行 Recorder，只会对数据湖不存在或 ZVT 仍缺的数据拉取（evaluate_start_end_size_timestamps 会跳过已满的实体）
     # 注：股票基础信息/板块/行业/货币供应量/复权因子 数据湖 import 脚本未实现，仅通过 API 拉取
@@ -220,12 +220,12 @@ def run_daily_job():
         ("行业板块信息 (xysz)", xyszIndustryBlockRecorder),
         ("行业成分股映射 (xysz)", xyszIndustryBlockStockRecorder),
         ("中国货币供应量 (Akshare)", ChinaMoneySupplyRecorder),
-        # ("日线 K 线数据 (xysz)", lambda: xyszStockKdataRecorder(level='1d')),
+        ("日线 K 线数据 (xysz)", lambda: xyszStockKdataRecorder(level='1d')),
         ("后复权日线 (xysz)", lambda: compute_and_save_xysz_hfq(start_timestamp=pd.Timestamp.now() - pd.Timedelta(days=15))),
         ("资产负债表 (xysz)", xyszBalanceSheetRecorder),
         ("利润表 (xysz)", xyszIncomeStatementRecorder),
         ("现金流量表 (xysz)", xyszCashFlowRecorder),
-        ("估值/市盈率 (xysz)", lambda: xyszValuationRecorder(sleeping_time=0)),
+        ("xysz 估值", lambda: xyszValuationRecorder(sleeping_time=0)),
         # QMT 数据更新任务
         ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
         ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
@@ -235,7 +235,6 @@ def run_daily_job():
         ("QMT 日线 (不复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.bfq, sleeping_time=0.2, ignore_failed=True)),
         ("QMT 日线 (后复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.hfq, sleeping_time=0.2, ignore_failed=True)),
         ("QMT 估值", lambda: QmtValuationRecorder(sleeping_time=0)),
-
     ]
 
     for name, recorder_factory in tasks:

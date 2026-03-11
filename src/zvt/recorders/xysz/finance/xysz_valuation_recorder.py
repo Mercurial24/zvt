@@ -146,23 +146,40 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         balance_df = balance_df.copy()
         cashflow_df = cashflow_df.copy()
 
+        # 增加逻辑：只计算今天之前的估值，防止计算不完整的盘中数据
+        today = pd.Timestamp.now().normalize()
         if "timestamp" in kdata_df.columns:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df["timestamp"])
+            kdata_df = kdata_df[pd.to_datetime(kdata_df["timestamp"]) < today]
         else:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df.index.get_level_values("timestamp"))
-        kdata_df["ts_merge"] = kdata_df["ts_merge"].dt.normalize()
+            kdata_df = kdata_df[kdata_df.index.get_level_values("timestamp") < today]
 
-        income_df["ts_merge"] = pd.to_datetime(income_df["report_period"])
-        balance_df["ts_merge"] = pd.to_datetime(balance_df["report_period"])
-        cashflow_df["ts_merge"] = pd.to_datetime(cashflow_df["report_period"])
+        if kdata_df.empty:
+            return
 
-        kdata_df = kdata_df.sort_values("ts_merge")
-        income_df = income_df.sort_values("ts_merge")
-        balance_df = balance_df.sort_values("ts_merge")
-        cashflow_df = cashflow_df.sort_values("ts_merge")
+        # 预设 ts_merge
+        if "timestamp" in kdata_df.columns:
+            kdata_df["ts_merge"] = pd.to_datetime(kdata_df["timestamp"]).dt.normalize()
+        else:
+            kdata_df["ts_merge"] = pd.to_datetime(kdata_df.index.get_level_values("timestamp")).dt.normalize()
 
+        income_df["ts_merge"] = pd.to_datetime(income_df["timestamp"]).dt.normalize()
+        balance_df["ts_merge"] = pd.to_datetime(balance_df["timestamp"]).dt.normalize()
+        cashflow_df["ts_merge"] = pd.to_datetime(cashflow_df["timestamp"]).dt.normalize()
+
+        # merge_asof requires no nulls in 'on' column
+        kdata_df = kdata_df.dropna(subset=["ts_merge"])
+        income_df = income_df.dropna(subset=["ts_merge"])
+        balance_df = balance_df.dropna(subset=["ts_merge"])
+        cashflow_df = cashflow_df.dropna(subset=["ts_merge"])
+
+        # 确保 K 线有当日总股本字段用于市值计算
         optional_kline_df = self._query_optional_kline_fields(entity=entity, start=start, end=end)
         if optional_kline_df is not None and not optional_kline_df.empty:
+            if "timestamp" in optional_kline_df.columns:
+                optional_kline_df["ts_merge"] = pd.to_datetime(optional_kline_df["timestamp"]).dt.normalize()
+            else:
+                optional_kline_df["ts_merge"] = pd.to_datetime(optional_kline_df.index.get_level_values("timestamp")).dt.normalize()
+
             kdata_df = pd.merge(
                 kdata_df,
                 optional_kline_df.drop(columns=["timestamp"], errors="ignore"),
@@ -170,112 +187,78 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
                 how="left",
                 suffixes=("", "_raw"),
             )
-            if "turnover_rate_raw" in kdata_df.columns:
-                kdata_df["turnover_rate"] = kdata_df["turnover_rate"].combine_first(kdata_df["turnover_rate_raw"])
-                kdata_df = kdata_df.drop(columns=["turnover_rate_raw"])
+            if "total_cap_raw" in kdata_df.columns:
+                kdata_df["total_cap"] = kdata_df.get("total_cap", pd.Series(np.nan, index=kdata_df.index)).combine_first(kdata_df["total_cap_raw"])
 
-        # 静态 PE：用最近一期年报净利润。只保留年报（report_period 为 12 月）
-        income_annual = income_df[
-            income_df["ts_merge"].dt.month == 12
-        ][["ts_merge", "net_profit_as_parent", "operating_income"]].copy()
+        # 核心逻辑：计算 TTM 指标
+        def compute_ttm_col(df, col):
+            work_df = df.copy().sort_values("report_period")
+            work_df["year"] = pd.to_datetime(work_df["report_period"]).dt.year
+            work_df["month"] = pd.to_datetime(work_df["report_period"]).dt.month
+            # 建立 (年, 月) -> 累计值的查找表
+            lookup = work_df.set_index(["year", "month"])[col].to_dict()
+
+            def get_ttm(row):
+                y, m = row["year"], row["month"]
+                if m == 12: return row[col] # 年报直接就是 TTM
+                prev_annual = lookup.get((y - 1, 12))
+                prev_ytd = lookup.get((y - 1, m))
+                if prev_annual is not None and prev_ytd is not None:
+                    return row[col] + prev_annual - prev_ytd
+                return np.nan
+            return work_df.apply(get_ttm, axis=1)
+
+        # 处理利润表 TTM
+        income_df["ttm_net_profit"] = compute_ttm_col(income_df, "net_profit_as_parent")
+        income_df["ttm_operating_income"] = compute_ttm_col(income_df, "operating_income")
+        
+        # 静态 PE 用年报
+        income_annual = income_df[pd.to_datetime(income_df["report_period"]).dt.month == 12][
+            ["ts_merge", "report_period", "net_profit_as_parent"]
+        ].copy()
         income_annual = income_annual.rename(columns={"net_profit_as_parent": "net_profit_annual"})
 
-        # 动态 PE(TTM)：用过去四个季度净利润之和。按 report_period 排序后滚动 4 期求和
-        income_df = income_df.copy()
-        income_df["ttm_net_profit"] = (
-            income_df["net_profit_as_parent"].rolling(4, min_periods=4).sum()
-        )
+        # 处理现金流 TTM
+        cashflow_df["ttm_net_op_cash_flows"] = compute_ttm_col(cashflow_df, "net_op_cash_flows")
 
-        # 先合并行情与利润表（TTM 口径，用于动态 PE 和市销率等）
-        df_merged = pd.merge_asof(
-            kdata_df,
-            income_df[["ts_merge", "net_profit_as_parent", "operating_income", "ttm_net_profit"]],
-            on="ts_merge",
-            direction="backward",
-        )
-        # 再合并最近一期年报净利润（用于静态 PE）
+        # --- 对齐：必须按公告日 (timestamp) 对齐股价 ---
+
+        df_merged = pd.merge_asof(kdata_df.sort_values("ts_merge"), 
+                                  income_df[["ts_merge", "ttm_net_profit", "ttm_operating_income", "report_period"]].sort_values(["ts_merge", "report_period"]), 
+                                  on="ts_merge", direction="backward")
+        
+        df_merged = pd.merge_asof(df_merged, balance_df[["ts_merge", "capital", "equity"]].sort_values(["ts_merge"]), 
+                                  on="ts_merge", direction="backward")
+        
+        df_merged = pd.merge_asof(df_merged, cashflow_df[["ts_merge", "ttm_net_op_cash_flows"]].sort_values(["ts_merge"]), 
+                                  on="ts_merge", direction="backward")
+
         if not income_annual.empty:
-            df_merged = pd.merge_asof(
-                df_merged,
-                income_annual[["ts_merge", "net_profit_annual"]],
-                on="ts_merge",
-                direction="backward",
-            )
-        else:
-            df_merged["net_profit_annual"] = np.nan
+            df_merged = pd.merge_asof(df_merged, income_annual[["ts_merge", "net_profit_annual"]].sort_values("ts_merge"), 
+                                      on="ts_merge", direction="backward")
 
-        df_merged = pd.merge_asof(
-            df_merged,
-            balance_df[["ts_merge", "capital", "equity"]],
-            on="ts_merge",
-            direction="backward",
-        )
-        df_merged = pd.merge_asof(
-            df_merged,
-            cashflow_df[["ts_merge", "net_op_cash_flows"]],
-            on="ts_merge",
-            direction="backward",
-        )
-
-        df_merged = df_merged.dropna(subset=["net_profit_as_parent", "capital"])
-        if df_merged.empty:
-            self.logger.warning(f"Merged valuation data is empty for {entity_id}")
-            return
-
-        df_merged = df_merged[df_merged["capital"] > 0]
-        cap = df_merged["capital"].values
+        # 核心：计算估值。优先使用 K 线里的动态总股本 total_cap，取不到再用财报股本 capital
+        df_merged["final_cap"] = df_merged.get("total_cap", pd.Series(np.nan, index=df_merged.index)).combine_first(df_merged["capital"])
+        df_merged = df_merged.dropna(subset=["final_cap", "close"])
+        
+        cap = df_merged["final_cap"].values
         close = df_merged["close"].values
-        equity = df_merged["equity"].values
-        operating_income = df_merged["operating_income"].values
-        net_op_cash = df_merged["net_op_cash_flows"].values
-
-        # 静态 PE：股价 / (最近一期年报归属母公司净利润 / 股本)
-        net_profit_annual = df_merged["net_profit_annual"].values
-        eps_annual = np.where(cap > 0, net_profit_annual / cap, np.nan)
-        pe_static = np.where(
-            np.isfinite(eps_annual) & (eps_annual > 0), close / eps_annual, np.nan
-        )
-        df_merged["pe"] = np.round(np.where(np.isfinite(pe_static), pe_static, np.nan), 2)
-
-        # 动态 PE(TTM)：股价 / (过去四季度归属母公司净利润 / 股本)
-        ttm_net_profit = df_merged["ttm_net_profit"].values
-        eps_ttm = np.where(cap > 0, ttm_net_profit / cap, np.nan)
-        pe_ttm = np.where(
-            np.isfinite(eps_ttm) & (eps_ttm > 0), close / eps_ttm, np.nan
-        )
-        df_merged["pe_ttm"] = np.round(np.where(np.isfinite(pe_ttm), pe_ttm, np.nan), 2)
-
+        
+        # 1. PE 计算 (不再过滤负值)
+        df_merged["pe"] = np.round(close / (df_merged["net_profit_annual"] / cap), 2)
+        df_merged["pe_ttm"] = np.round(close / (df_merged["ttm_net_profit"] / cap), 2)
+        
+        # 2. 市值
         df_merged["market_cap"] = close * cap
-
-        # 市净率：市值 / 归属母公司股东权益
-        df_merged["pb"] = np.round(
-            np.where(
-                np.isfinite(equity) & (equity > 0),
-                (close * cap) / equity,
-                np.nan,
-            ),
-            2,
-        )
-
-        # 市销率：市值 / 营业收入
-        df_merged["ps"] = np.round(
-            np.where(
-                np.isfinite(operating_income) & (operating_income > 0),
-                (close * cap) / operating_income,
-                np.nan,
-            ),
-            2,
-        )
-
-        # 市现率：市值 / 经营活动现金流净额
-        df_merged["pcf"] = np.round(
-            np.where(
-                np.isfinite(net_op_cash) & (net_op_cash > 0),
-                (close * cap) / net_op_cash,
-                np.nan,
-            ),
-            2,
-        )
+        
+        # 3. PB (时点指标)
+        df_merged["pb"] = np.round(df_merged["market_cap"] / df_merged["equity"], 2)
+        
+        # 4. PS (TTM)
+        df_merged["ps"] = np.round(df_merged["market_cap"] / df_merged["ttm_operating_income"], 2)
+        
+        # 5. PCF (TTM)
+        df_merged["pcf"] = np.round(df_merged["market_cap"] / df_merged["ttm_net_op_cash_flows"], 2)
 
         # 流通股本 / 流通市值：来自 Stock 实体的 float_cap（流通市值），反推流通股本
         float_cap_series = df_merged["float_cap"] if "float_cap" in df_merged.columns else np.nan

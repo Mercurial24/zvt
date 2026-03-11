@@ -437,15 +437,13 @@ class TimeSeriesDataRecorder(EntityEventRecorder):
 
                     if timestamps:
                         self.logger.info(
-                            "entity_id:{},evaluate_start_end_size_timestamps result:{},{},{},{}-{}".format(
-                                entity_item.id, start_timestamp, end_timestamp, size, timestamps[0], timestamps[-1]
-                            )
+                            f"[{entity_item.id}] 数据范围: {start_timestamp} -> {end_timestamp}, 数量: {size}, 时间点: {timestamps[0]}...{timestamps[-1]}"
                         )
                     else:
+                        start_str = start_timestamp if start_timestamp else "开始"
+                        end_str = end_timestamp if end_timestamp else "至今"
                         self.logger.info(
-                            "entity_id:{},evaluate_start_end_size_timestamps result:{},{},{},{}".format(
-                                entity_item.id, start_timestamp, end_timestamp, size, timestamps
-                            )
+                            f"[{entity_item.id}] 数据范围: {start_str} -> {end_str}, 预计条数: {size}"
                         )
 
                     # update progress bar description with current entity code
