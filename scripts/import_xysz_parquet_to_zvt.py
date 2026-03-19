@@ -590,6 +590,42 @@ def import_right_issue(base_dir: str, provider: str, max_rows: Optional[int], ba
     return total
 
 
+def import_stock_meta(base_dir: str, provider: str, max_rows: Optional[int], batch_size: int, df_to_db: Callable) -> int:
+    """导入股票基础信息 → Stock（阶段1 写入 stock_meta.parquet）。"""
+    from zvt.domain import Stock
+
+    path = os.path.join(base_dir, "stock_meta.parquet")
+    if not os.path.isfile(path):
+        logger.warning("不存在 %s", path)
+        return 0
+    schema_cols = list(Stock.__table__.columns.keys())
+    total = 0
+    for batch_df in _read_parquet_in_batches(path, max_rows, batch_size):
+        if batch_df.empty:
+            continue
+        df = batch_df.copy()
+        if "entity_id" not in df.columns and "MARKET_CODE" in df.columns:
+            df["entity_id"] = df["MARKET_CODE"].apply(lambda c: xysz_code_to_entity_id(c)[0])
+        if "code" not in df.columns and "entity_id" in df.columns:
+            df["code"] = df["entity_id"].str.replace(r"^stock_[a-z]+_", "", regex=True)
+        df["id"] = df["entity_id"]
+        df["entity_type"] = "stock"
+        df["provider"] = provider
+        for col in ["list_date", "end_date", "timestamp"]:
+            if col in df.columns and df[col].dtype == object:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+        out_cols = [c for c in schema_cols if c in df.columns]
+        if not out_cols:
+            continue
+        attempted = len(df)
+        saved = df_to_db(df=df[out_cols], data_schema=Stock, provider=provider, force_update=True)
+        total += saved
+        logger.info("stock_meta 本批尝试 %d 行，实际写入 %d 行，累计写入 %d", attempted, saved, total)
+        del df, batch_df
+        gc.collect()
+    return total
+
+
 def import_industry_base_info(base_dir: str, provider: str, max_rows: Optional[int], batch_size: int, df_to_db: Callable) -> int:
     """导入行业基础信息 → Block（阶段1 写入 industry_base_info.parquet）。"""
     from zvt.domain import Block
@@ -682,27 +718,101 @@ def import_industry_constituent(base_dir: str, provider: str, max_rows: Optional
 
 
 def import_backward_factor(base_dir: str, provider: str, max_rows: Optional[int], batch_size: int, df_to_db: Callable) -> int:
-    """导入后复权因子 → stock_adj_factor（阶段1 写入 backward_factor.parquet，宽表：index=日期，columns=股票代码）。
-    说明：该 parquet 的日期通常存放在 pandas index 元数据里，通用批读取流程会丢失该 index，
-    因此这里按 row_group 读取并在 pandas 内切块，确保日期列可用，同时保持低内存。"""
+    """导入后复权因子 → stock_adj_factor。
+
+    支持两种格式：
+    1. 新格式（per-stock）: backward_factor/ 目录，每只股票一个 CODE.parquet 文件
+    2. 旧格式（宽表）: backward_factor.parquet 单文件
+    """
     from zvt.recorders.xysz.quotes.xysz_stock_adj_factor_recorder import StockAdjFactor
-    path = os.path.join(base_dir, "backward_factor.parquet")
-    if not os.path.isfile(path):
-        logger.warning("不存在 %s", path)
+
+    dir_path = os.path.join(base_dir, "backward_factor")
+    legacy_path = os.path.join(base_dir, "backward_factor.parquet")
+
+    use_per_stock = os.path.isdir(dir_path) and len(os.listdir(dir_path)) > 0
+
+    if use_per_stock:
+        return _import_backward_factor_per_stock(dir_path, provider, max_rows, batch_size, df_to_db, StockAdjFactor)
+    elif os.path.isfile(legacy_path):
+        return _import_backward_factor_legacy(legacy_path, provider, max_rows, batch_size, df_to_db, StockAdjFactor)
+    else:
+        logger.warning("不存在 backward_factor 目录或 backward_factor.parquet")
         return 0
+
+
+def _import_backward_factor_per_stock(
+    dir_path: str, provider: str, max_rows: Optional[int], batch_size: int, df_to_db: Callable, StockAdjFactor
+) -> int:
+    """从 per-stock parquet 目录导入复权因子。"""
+    schema_cols = list(StockAdjFactor.__table__.columns.keys())
+    files = sorted(f for f in os.listdir(dir_path) if f.endswith(".parquet"))
+    total = 0
+    pbar = tqdm(files, desc="backward_factor (per-stock)", unit="file", dynamic_ncols=True)
+    for fname in pbar:
+        if max_rows is not None and total >= max_rows:
+            break
+        fpath = os.path.join(dir_path, fname)
+        market_code_raw = fname.replace(".parquet", "")
+        market_code = _normalize_adj_factor_column_to_market_code(market_code_raw)
+        entity_id, exchange, code = xysz_code_to_entity_id(market_code)
+
+        try:
+            df = pd.read_parquet(fpath)
+        except Exception as e:
+            logger.warning("读取 %s 失败: %s", fpath, e)
+            continue
+        if df.empty:
+            continue
+
+        date_col = "date" if "date" in df.columns else df.columns[0]
+        factor_col = "factor" if "factor" in df.columns else df.columns[-1]
+        df = df.rename(columns={date_col: "timestamp", factor_col: "hfq_factor"})
+
+        if pd.api.types.is_numeric_dtype(df["timestamp"]):
+            df = df[df["timestamp"] > 19000101]
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int).astype(str), format="%Y%m%d", errors="coerce")
+        else:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df = df.dropna(subset=["hfq_factor"])
+        if df.empty:
+            continue
+
+        df["entity_id"] = entity_id
+        df["code"] = code
+        df["provider"] = provider
+        df["id"] = entity_id + "_" + df["timestamp"].dt.strftime("%Y-%m-%d")
+
+        out_cols = [c for c in schema_cols if c in df.columns]
+        for start in range(0, len(df), batch_size):
+            if max_rows is not None and total >= max_rows:
+                break
+            chunk = df.iloc[start : start + batch_size]
+            if max_rows is not None and total + len(chunk) > max_rows:
+                chunk = chunk.iloc[: max_rows - total]
+            saved = df_to_db(df=chunk[out_cols], data_schema=StockAdjFactor, provider=provider, force_update=False)
+            total += saved
+        pbar.set_postfix_str(f"累计={total}")
+        del df
+        gc.collect()
+    pbar.close()
+    return total
+
+
+def _import_backward_factor_legacy(
+    path: str, provider: str, max_rows: Optional[int], batch_size: int, df_to_db: Callable, StockAdjFactor
+) -> int:
+    """从旧宽表 parquet 文件导入复权因子（兼容）。"""
     schema_cols = list(StockAdjFactor.__table__.columns.keys())
     total = 0
-    # 宽表每批行数（日期数），避免 melt 后单批过大
     wide_row_batch = min(500, batch_size)
     out_cols_cache = None
     pf = pq.ParquetFile(path)
-    # 估算总批次数用于进度条（宽表行数×股票列数 / 写入批大小）
     n_wide_rows = sum(pf.metadata.row_group(i).num_rows for i in range(pf.metadata.num_row_groups))
     n_code_cols = max(0, len(pf.schema.names) - 1)
     total_batches_estimate = (n_wide_rows * n_code_cols) // batch_size
     if max_rows is not None:
         total_batches_estimate = min(total_batches_estimate, max(1, max_rows // batch_size))
-    pbar = tqdm(total=total_batches_estimate, desc="backward_factor", unit="batch", dynamic_ncols=True)
+    pbar = tqdm(total=total_batches_estimate, desc="backward_factor (legacy)", unit="batch", dynamic_ncols=True)
     for i in range(pf.metadata.num_row_groups):
         if max_rows is not None and total >= max_rows:
             break
@@ -742,7 +852,6 @@ def import_backward_factor(base_dir: str, provider: str, max_rows: Optional[int]
             if long_df.empty:
                 gc.collect()
                 continue
-            # 列名可能为 "000001.SZ" 或 "000001"，先规范为 CODE.EXCHANGE 再转 entity_id，与 Recorder(Stock) 一致
             market_code = long_df["code"].apply(lambda c: _normalize_adj_factor_column_to_market_code(str(c)))
             long_df["entity_id"] = market_code.apply(lambda c: xysz_code_to_entity_id(c)[0])
             long_df["code"] = market_code.apply(lambda c: xysz_code_to_entity_id(c)[2])
@@ -771,8 +880,8 @@ def import_backward_factor(base_dir: str, provider: str, max_rows: Optional[int]
 
 def main():
     parser = argparse.ArgumentParser(description="将 xysz base_data 下 parquet 分批导入 zvt")
-    parser.add_argument("--base-dir", default="/data/stock_data/xysz_data/base_data", help="parquet 所在目录")
-    parser.add_argument("--only", default="", help="只导入的表，逗号分隔，如 klines_daily,balance_sheet,income,cash_flow,holder_num,share_holder,dividend,right_issue,backward_factor,industry_base_info,industry_constituent。空表示全部")
+    parser.add_argument("--base-dir", default="/mnt/point/stock_data/xysz_data/base_data", help="parquet 所在目录")
+    parser.add_argument("--only", default="", help="只导入的表，逗号分隔，如 stock_meta,klines_daily,balance_sheet,income,cash_flow,holder_num,share_holder,dividend,right_issue,backward_factor,industry_base_info,industry_constituent。空表示全部")
     parser.add_argument("--max-rows", type=int, default=None, help="每种表最多导入行数（用于测试）")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_ROW_BATCH, help="每批行数")
     parser.add_argument("--provider", default="xysz", help="写入 zvt 的 provider")
@@ -797,6 +906,7 @@ def main():
     if args.count_only:
         only = [x.strip() for x in args.only.split(",") if x.strip()]
         tables = [
+            ("stock_meta", None, os.path.join(args.base_dir, "stock_meta.parquet")),
             ("klines_daily", os.path.join(args.base_dir, "klines_daily_dir"), os.path.join(args.base_dir, "klines_daily.parquet")),
             ("balance_sheet", None, os.path.join(args.base_dir, "balance_sheet.parquet")),
             ("income", None, os.path.join(args.base_dir, "income.parquet")),
@@ -859,6 +969,8 @@ def main():
 
     only = [x.strip() for x in args.only.split(",") if x.strip()]
     runners = []
+    if not only or "stock_meta" in only:
+        runners.append(("stock_meta", lambda: import_stock_meta(args.base_dir, args.provider, args.max_rows, effective_batch_size, _df_to_db)))
     if not only or "klines_daily" in only:
         runners.append(("klines_daily", lambda: import_klines_daily(args.base_dir, args.provider, args.max_rows, effective_batch_size, _df_to_db, args.count_rows)))
     if not only or "balance_sheet" in only:

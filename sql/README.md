@@ -27,7 +27,7 @@ sqlite3 [数据库文件路径] < [SQL脚本文件路径]
 ```bash
 # 在项目根目录下执行
 # 将 eastmoney 的交易数据库大小由 GB 级压缩至 MB 级
-sqlite3 zvt-home/data/eastmoney/eastmoney_trading.db < sql/reduce_size.sql
+sqlite3 /data/code/zvt/zvt-home/data/eastmoney/eastmoney_trading.db < sql/reduce_size.sql
 ```
 
 ### 方法 2：使用 IDE 数据库控制台 (最直观)

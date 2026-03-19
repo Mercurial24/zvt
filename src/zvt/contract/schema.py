@@ -27,6 +27,9 @@ class Mixin(object):
 
     # unix epoch,same meaning with timestamp
     # ts = Column(BIGINT)
+    
+    # zvt storage engine router marker (sqlite vs parquet)
+    storage_type: str = "sqlite"
 
     @classmethod
     def help(cls):

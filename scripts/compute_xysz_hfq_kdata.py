@@ -32,57 +32,74 @@ def xysz_code_to_entity_id(market_code: str) -> str:
     ex = "sh" if exchange == "SH" else ("sz" if exchange == "SZ" else "bj")
     return f"stock_{ex}_{code}"
 
+def _load_factor_for_entity_ids(factor_dir: str, entity_ids: list, entity_to_market_code: dict) -> pd.DataFrame:
+    """从 per-stock parquet 目录加载指定 entity 的复权因子，返回长表。
+
+    Returns:
+        DataFrame with columns [timestamp, entity_id, hfq_factor]
+    """
+    dfs = []
+    for eid in entity_ids:
+        market_code = entity_to_market_code.get(eid)
+        if not market_code:
+            continue
+        fpath = os.path.join(factor_dir, f"{market_code}.parquet")
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            df = pd.read_parquet(fpath)
+        except Exception:
+            continue
+        if df.empty:
+            continue
+        date_col = df.columns[0] if "date" not in df.columns else "date"
+        if date_col != "timestamp":
+            df = df.rename(columns={date_col: "timestamp"})
+        if pd.api.types.is_numeric_dtype(df["timestamp"]):
+            df = df[df["timestamp"] > 19000101]
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int).astype(str), format="%Y%m%d", errors="coerce")
+        else:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        factor_col = "factor" if "factor" in df.columns else df.columns[-1]
+        df = df[["timestamp", factor_col]].rename(columns={factor_col: "hfq_factor"})
+        df = df.dropna(subset=["hfq_factor"])
+        df["entity_id"] = eid
+        dfs.append(df)
+    if not dfs:
+        return pd.DataFrame(columns=["timestamp", "entity_id", "hfq_factor"])
+    return pd.concat(dfs, ignore_index=True)
+
+
 def compute_and_save_xysz_hfq(codes: List[str] = None, start_timestamp=None):
     """
-    基于 Parquet 中的后复权因子和数据库中的日线，计算并保存后复权 K 线。
+    基于 per-stock parquet 目录中的后复权因子和数据库中的日线，计算并保存后复权 K 线。
+
+    支持两种复权因子存储格式：
+    1. 新格式（每股一个文件）: backward_factor/ 目录下 CODE.parquet
+    2. 旧格式（宽表单文件）: backward_factor.parquet
     """
     logger.info("开始计算 xysz 后复权 K 线...")
 
-    factor_path = os.path.join(XYSZ_PARQUET_BASE_DIR, "backward_factor.parquet")
-    if not os.path.isfile(factor_path):
-        logger.error(f"未找到复权因子文件: {factor_path}")
+    factor_dir = os.path.join(XYSZ_PARQUET_BASE_DIR, "backward_factor")
+    factor_path_legacy = os.path.join(XYSZ_PARQUET_BASE_DIR, "backward_factor.parquet")
+
+    use_per_stock = os.path.isdir(factor_dir) and len(os.listdir(factor_dir)) > 0
+
+    if not use_per_stock and not os.path.isfile(factor_path_legacy):
+        logger.error(f"未找到复权因子: 目录 {factor_dir} 或文件 {factor_path_legacy}")
         return
-
-    # 加载复权因子 parquet
-    logger.info("正在加载 Parquet 复权因子...")
-    try:
-        df_factor_wide = pd.read_parquet(factor_path)
-    except Exception as e:
-        logger.error(f"加载复权因子失败: {e}")
-        return
-
-    # 规范化列名和时间
-    if df_factor_wide.index.names and "index" in (df_factor_wide.index.names or []) or isinstance(df_factor_wide.index, pd.DatetimeIndex):
-        df_factor_wide = df_factor_wide.reset_index()
-    
-    date_col = df_factor_wide.columns[0]
-    if date_col == "index":
-        df_factor_wide = df_factor_wide.rename(columns={"index": "timestamp"})
-        date_col = "timestamp"
-
-    if pd.api.types.is_numeric_dtype(df_factor_wide[date_col]):
-        df_factor_wide = df_factor_wide[df_factor_wide[date_col] > 19000101]
-        df_factor_wide["timestamp"] = pd.to_datetime(df_factor_wide[date_col].astype(int).astype(str), format="%Y%m%d", errors="coerce")
-    else:
-        df_factor_wide["timestamp"] = pd.to_datetime(df_factor_wide[date_col], errors="coerce")
-
-    # 构建 code 到 entity_id 的映射
-    code_cols = [c for c in df_factor_wide.columns if c not in [date_col, "timestamp"]]
-    code_to_entity = {c: xysz_code_to_entity_id(_normalize_code(c)) for c in code_cols}
-    # 反向查找：根据 entity_id 找 code_col
-    entity_to_code = {v: k for k, v in code_to_entity.items()}
 
     session = get_db_session(provider="xysz", data_schema=Stock1dKdata)
-    
+
     if codes:
         df_entities = Stock1dKdata.query_data(
-            provider="xysz", 
-            columns=[Stock1dKdata.entity_id, Stock1dKdata.code], 
-            limit=1000000 
+            provider="xysz",
+            columns=[Stock1dKdata.entity_id, Stock1dKdata.code],
+            limit=1000000,
         )
         if df_entities is not None and not df_entities.empty:
-            mapping = df_entities.drop_duplicates(subset=['code'])
-            target_ids = mapping[mapping['code'].isin(codes)]['entity_id'].tolist()
+            mapping = df_entities.drop_duplicates(subset=["code"])
+            target_ids = mapping[mapping["code"].isin(codes)]["entity_id"].tolist()
         else:
             target_ids = []
     else:
@@ -95,56 +112,154 @@ def compute_and_save_xysz_hfq(codes: List[str] = None, start_timestamp=None):
 
     logger.info(f"共获取到 {len(target_ids)} 只股票准备进行计算入库...")
 
+    entity_to_market_code = {}
+    for eid in target_ids:
+        parts = eid.split("_")
+        if len(parts) >= 3:
+            ex = parts[1].upper()
+            code = parts[2]
+            entity_to_market_code[eid] = f"{code}.{ex}"
+
     batch_size = 50
     import tqdm
     for i in tqdm.tqdm(range(0, len(target_ids), batch_size), desc="批处理进度"):
-        batch_ids = target_ids[i:i + batch_size]
-        
-        # 增量更新条件
+        batch_ids = target_ids[i : i + batch_size]
+
         filters = [Stock1dKdata.entity_id.in_(batch_ids)]
         if start_timestamp:
             filters.append(Stock1dKdata.timestamp >= start_timestamp)
 
-        df_kdata = Stock1dKdata.query_data(provider="xysz", filters=filters)
+        from zvt.contract.api import get_data
+
+        df_kdata = get_data(
+            data_schema=Stock1dKdata, entity_ids=batch_ids, filters=filters
+        )
+
         if df_kdata is None or df_kdata.empty:
             continue
-            
-        # 从宽表中提取当前 batch 的因子
-        batch_cols = [entity_to_code.get(e) for e in batch_ids if entity_to_code.get(e) in df_factor_wide.columns]
-        if not batch_cols:
+
+        if use_per_stock:
+            df_adj = _load_factor_for_entity_ids(
+                factor_dir, batch_ids, entity_to_market_code
+            )
+        else:
+            df_adj = _load_factor_legacy_wide(
+                factor_path_legacy, batch_ids, entity_to_market_code
+            )
+
+        if df_adj.empty:
             continue
-            
-        df_adj = df_factor_wide[["timestamp"] + batch_cols].copy()
-        df_adj = df_adj.melt(id_vars=["timestamp"], value_vars=batch_cols, var_name="code", value_name="hfq_factor")
-        df_adj = df_adj.dropna(subset=["hfq_factor"])
-        df_adj["entity_id"] = df_adj["code"].map(code_to_entity)
 
         df_merged = pd.merge(
-            df_kdata, 
-            df_adj[['entity_id', 'timestamp', 'hfq_factor']], 
-            on=['entity_id', 'timestamp'], 
-            how='left'
+            df_kdata,
+            df_adj[["entity_id", "timestamp", "hfq_factor"]],
+            on=["entity_id", "timestamp"],
+            how="left",
         )
-        
-        # 针对每只股票分别做 ffill() 和 bfill()
-        df_merged['hfq_factor'] = df_merged.groupby('entity_id')['hfq_factor'].transform(lambda x: x.ffill().bfill())
-        df_merged['hfq_factor'] = df_merged['hfq_factor'].fillna(1.0)
-        
+
+        df_merged["hfq_factor"] = df_merged.groupby("entity_id")[
+            "hfq_factor"
+        ].transform(lambda x: x.ffill().bfill())
+        df_merged["hfq_factor"] = df_merged["hfq_factor"].fillna(1.0)
+
         df_hfq = df_merged.copy()
-        for col in ['open', 'close', 'high', 'low']:
-            df_hfq[col] = df_hfq[col] * df_hfq['hfq_factor']
-        
-        df_hfq['volume'] = df_hfq['volume'] / df_hfq['hfq_factor']
-        
-        df_hfq = df_hfq.drop(columns=['hfq_factor', 'id'], errors='ignore')
-        df_hfq['id'] = df_hfq['entity_id'] + '_' + df_hfq['timestamp'].dt.strftime('%Y-%m-%d')
-        df_hfq['level'] = '1d'
-        
-        df_to_db(df=df_hfq, data_schema=Stock1dHfqKdata, provider="xysz", force_update=True)
-        # 清理内存
+        for col in ["open", "close", "high", "low"]:
+            df_hfq[col] = df_hfq[col] * df_hfq["hfq_factor"]
+
+        df_hfq["volume"] = df_hfq["volume"] / df_hfq["hfq_factor"]
+
+        df_hfq = df_hfq.drop(columns=["hfq_factor", "id"], errors="ignore")
+        df_hfq["id"] = (
+            df_hfq["entity_id"] + "_" + df_hfq["timestamp"].dt.strftime("%Y-%m-%d")
+        )
+        df_hfq["level"] = "1d"
+
+        df_hfq["date"] = df_hfq["timestamp"].dt.strftime("%Y%m%d").astype("int64")
+
+        import tempfile
+        import shutil
+        import polars as pl
+
+        target_path = os.path.join(XYSZ_PARQUET_BASE_DIR, "klines_daily_hfq_dir")
+        os.makedirs(target_path, exist_ok=True)
+
+        local_tmp = tempfile.mkdtemp(prefix="hfq_calc_tmp_")
+        try:
+            lazy_new = pl.from_pandas(df_hfq).lazy()
+            df_new = lazy_new.collect()
+            df_new.write_parquet(local_tmp, partition_by="date")
+
+            for item in os.listdir(local_tmp):
+                s_dir = os.path.join(local_tmp, item)
+                d_dir = os.path.join(target_path, item)
+                if os.path.isdir(s_dir):
+                    if os.path.exists(d_dir):
+                        for f in os.listdir(s_dir):
+                            shutil.copy2(os.path.join(s_dir, f), os.path.join(d_dir, f))
+                    else:
+                        shutil.copytree(s_dir, d_dir)
+                else:
+                    shutil.copy2(s_dir, d_dir)
+        finally:
+            shutil.rmtree(local_tmp, ignore_errors=True)
+
         del df_kdata, df_adj, df_merged, df_hfq
 
-    logger.info("后复权 K线数据计算并建库完毕。")
+    logger.info("后复权 K线数据计算并Parquet建库完毕。")
+
+
+def _load_factor_legacy_wide(
+    factor_path: str, entity_ids: list, entity_to_market_code: dict
+) -> pd.DataFrame:
+    """兼容旧宽表格式的复权因子加载。"""
+    try:
+        df_factor_wide = pd.read_parquet(factor_path)
+    except Exception as e:
+        logger.error(f"加载旧格式复权因子失败: {e}")
+        return pd.DataFrame(columns=["timestamp", "entity_id", "hfq_factor"])
+
+    if isinstance(df_factor_wide.index, pd.DatetimeIndex) or (
+        df_factor_wide.index.names
+        and "index" in (df_factor_wide.index.names or [])
+    ):
+        df_factor_wide = df_factor_wide.reset_index()
+
+    date_col = df_factor_wide.columns[0]
+    if date_col == "index":
+        df_factor_wide = df_factor_wide.rename(columns={"index": "timestamp"})
+        date_col = "timestamp"
+
+    if pd.api.types.is_numeric_dtype(df_factor_wide[date_col]):
+        df_factor_wide = df_factor_wide[df_factor_wide[date_col] > 19000101]
+        df_factor_wide["timestamp"] = pd.to_datetime(
+            df_factor_wide[date_col].astype(int).astype(str),
+            format="%Y%m%d",
+            errors="coerce",
+        )
+    else:
+        df_factor_wide["timestamp"] = pd.to_datetime(
+            df_factor_wide[date_col], errors="coerce"
+        )
+
+    market_to_entity = {v: k for k, v in entity_to_market_code.items()}
+    batch_cols = [
+        entity_to_market_code[e]
+        for e in entity_ids
+        if entity_to_market_code.get(e) in df_factor_wide.columns
+    ]
+    if not batch_cols:
+        return pd.DataFrame(columns=["timestamp", "entity_id", "hfq_factor"])
+
+    df_adj = df_factor_wide[["timestamp"] + batch_cols].copy()
+    df_adj = df_adj.melt(
+        id_vars=["timestamp"],
+        value_vars=batch_cols,
+        var_name="code",
+        value_name="hfq_factor",
+    )
+    df_adj = df_adj.dropna(subset=["hfq_factor"])
+    df_adj["entity_id"] = df_adj["code"].map(market_to_entity)
+    return df_adj[["timestamp", "entity_id", "hfq_factor"]]
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")

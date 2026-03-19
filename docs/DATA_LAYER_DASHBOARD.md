@@ -16,13 +16,13 @@
 
 ## 2. 数据源总览
 
-| 数据源 | 说明 | 相关文档 / 脚本 |
-|--------|------|------------------|
-| **xysz** | 星河数智 / AmazingData，A 股行情、财务、股东、行业等 | [docs/XYSZ_PARQUET_IMPORT.md](XYSZ_PARQUET_IMPORT.md)、`scripts/import_xysz_parquet_to_zvt.py` |
-| **qmt** | 迅投 QMT（Windows），通过 RPC 在 Linux 拉行情与财务 | [docs/AGENT_GUIDE_QMT_LINUX.md](AGENT_GUIDE_QMT_LINUX.md)、`scripts/update_qmt_data.py` |
-| **akshare** | AkShare 接口，板块、宏观等 | — |
-| **em / eastmoney** | 东方财富，港股/美股/指数/新闻等（本看板重点为 xysz / qmt） | — |
-| **joinquant** | 聚宽（本项目中未在每日任务中启用） | — |
+| 数据源             | 说明                                                       | 相关文档 / 脚本                                                                                |
+| ------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **xysz**           | 星河数智 / AmazingData，A 股行情、财务、股东、行业等       | [docs/XYSZ_PARQUET_IMPORT.md](XYSZ_PARQUET_IMPORT.md)、`scripts/import_xysz_parquet_to_zvt.py` |
+| **qmt**            | 迅投 QMT（Windows），通过 RPC 在 Linux 拉行情与财务        | [docs/AGENT_GUIDE_QMT_LINUX.md](AGENT_GUIDE_QMT_LINUX.md)、`scripts/update_qmt_data.py`        |
+| **akshare**        | AkShare 接口，板块、宏观等                                 | —                                                                                              |
+| **em / eastmoney** | 东方财富，港股/美股/指数/新闻等（本看板重点为 xysz / qmt） | —                                                                                              |
+| **joinquant**      | 聚宽（本项目中未在每日任务中启用）                         | —                                                                                              |
 
 ---
 
@@ -42,18 +42,18 @@
 
 **已落盘数据（ZVT 表 + provider）**
 
-| 逻辑表 / db_name | 说明 | 备注 |
-|------------------|------|------|
-| Stock (stock_meta) | 股票列表、基础信息 | xysz 股票列表 |
-| Block / BlockStock (block_meta) | 行业板块、成分股 | 行业基础信息 + 成分股映射 |
-| Stock1dKdata (stock_1d_kdata) | 日 K 线（不复权） | 可来自 Parquet 或 Recorder |
-| StockAdjFactor (stock_adj_factor) | 后复权因子 | 仅 xysz 使用该 schema |
-| Stock1dHfqKdata (stock_1d_hfq_kdata) | 日 K 后复权 | 由脚本根据日 K + 复权因子计算 |
-| BalanceSheet / IncomeStatement / CashFlowStatement (finance) | 资产负债表、利润表、现金流量表 | 三表同一 db_name |
-| StockValuation (valuation) | 估值（PE/PB/PS/PCF、市值、换手率等） | 由 xysz 财务 + K 线计算 |
-| HolderNum (holder) | 股东户数 | |
-| TopTenHolder (holder) | 十大股东 | |
-| DividendDetail / RightsIssueDetail (dividend_financing) | 分红、配股 | 可由 Parquet 导入 |
+| 逻辑表 / db_name                                             | 说明                                 | 备注                          |
+| ------------------------------------------------------------ | ------------------------------------ | ----------------------------- |
+| Stock (stock_meta)                                           | 股票列表、基础信息                   | xysz 股票列表                 |
+| Block / BlockStock (block_meta)                              | 行业板块、成分股                     | 行业基础信息 + 成分股映射     |
+| Stock1dKdata (stock_1d_kdata)                                | 日 K 线（不复权）                    | 可来自 Parquet 或 Recorder    |
+| StockAdjFactor (stock_adj_factor)                            | 后复权因子                           | 仅 xysz 使用该 schema         |
+| Stock1dHfqKdata (stock_1d_hfq_kdata)                         | 日 K 后复权                          | 由脚本根据日 K + 复权因子计算 |
+| BalanceSheet / IncomeStatement / CashFlowStatement (finance) | 资产负债表、利润表、现金流量表       | 三表同一 db_name              |
+| StockValuation (valuation)                                   | 估值（PE/PB/PS/PCF、市值、换手率等） | 由 xysz 财务 + K 线计算       |
+| HolderNum (holder)                                           | 股东户数                             |                               |
+| TopTenHolder (holder)                                        | 十大股东                             |                               |
+| DividendDetail / RightsIssueDetail (dividend_financing)      | 分红、配股                           | 可由 Parquet 导入             |
 
 **Parquet 与 Recorder 对应**
 
@@ -76,12 +76,12 @@
 
 **已落盘数据（ZVT 表 + provider）**
 
-| 逻辑表 / db_name | 说明 | 备注 |
-|------------------|------|------|
-| Stock (stock_meta) | 股票列表 | QMT 全市场列表 |
-| Index1dKdata (index_1d_kdata) | 重要指数日 K | 需在 schema 中注册 provider qmt |
-| BalanceSheet / IncomeStatement / CashFlowStatement (finance) | 资产负债表、利润表、现金流量表 | 列名与 QMT 财务字段全量映射 |
-| Stock1dKdata (stock_1d_kdata) | 日 K（不复权 bfq / 后复权 hfq） | 按 adjust_type 分表写入 |
+| 逻辑表 / db_name                                             | 说明                            | 备注                            |
+| ------------------------------------------------------------ | ------------------------------- | ------------------------------- |
+| Stock (stock_meta)                                           | 股票列表                        | QMT 全市场列表                  |
+| Index1dKdata (index_1d_kdata)                                | 重要指数日 K                    | 需在 schema 中注册 provider qmt |
+| BalanceSheet / IncomeStatement / CashFlowStatement (finance) | 资产负债表、利润表、现金流量表  | 列名与 QMT 财务字段全量映射     |
+| Stock1dKdata (stock_1d_kdata)                                | 日 K（不复权 bfq / 后复权 hfq） | 按 adjust_type 分表写入         |
 
 **说明**
 
@@ -98,9 +98,9 @@
 
 **已落盘数据（本每日任务涉及）**
 
-| 逻辑表 / db_name | 说明 |
-|------------------|------|
-| Block (block_meta) | 板块基础信息 |
+| 逻辑表 / db_name                      | 说明           |
+| ------------------------------------- | -------------- |
+| Block (block_meta)                    | 板块基础信息   |
 | ChinaMoneySupply (china_money_supply) | 中国货币供应量 |
 
 ---
@@ -116,27 +116,27 @@
 
 **当前每日任务列表（顺序执行）**
 
-| 序号 | 任务名称 | 数据源 | 说明 |
-|------|----------|--------|------|
-| 1 | 股票基础信息 (xysz) | xysz | xyszStockMetaRecorder |
-| 2 | 板块基础信息 (Akshare) | akshare | AkshareBlockRecorder |
-| 3 | 行业板块信息 (xysz) | xysz | 行业 Block + BlockStock |
-| 4 | 行业成分股映射 (xysz) | xysz | |
-| 5 | 中国货币供应量 (Akshare) | akshare | ChinaMoneySupplyRecorder |
-| 6 | 复权因子 (xysz) | xysz | xyszStockAdjFactorRecorder |
-| 7 | 日线 K 线数据 (xysz) | xysz | xyszStockKdataRecorder, level='1d' |
-| 8 | 后复权日线 (xysz) | xysz | compute_and_save_xysz_hfq（近约 15 日） |
-| 9 | 资产负债表 (xysz) | xysz | xyszBalanceSheetRecorder |
-| 10 | 利润表 (xysz) | xysz | xyszIncomeStatementRecorder |
-| 11 | 现金流量表 (xysz) | xysz | xyszCashFlowRecorder |
-| 12 | 估值/市盈率 (xysz) | xysz | xyszValuationRecorder（PE/PB/PS/PCF 等） |
-| 13 | QMT 股票列表 | qmt | QMTStockRecorder |
-| 14 | QMT 指数日线 | qmt | QmtIndexRecorder（IMPORTANT_INDEX） |
-| 15 | QMT 资产负债表 | qmt | QmtBalanceSheetRecorder |
-| 16 | QMT 利润表 | qmt | QmtIncomeStatementRecorder |
-| 17 | QMT 现金流量表 | qmt | QmtCashFlowRecorder |
-| 18 | QMT 日线 (不复权) | qmt | QMTStockKdataRecorder, bfq |
-| 19 | QMT 日线 (后复权) | qmt | QMTStockKdataRecorder, hfq |
+| 序号 | 任务名称                 | 数据源  | 说明                                     |
+| ---- | ------------------------ | ------- | ---------------------------------------- |
+| 1    | 股票基础信息 (xysz)      | xysz    | xyszStockMetaRecorder                    |
+| 2    | 板块基础信息 (Akshare)   | akshare | AkshareBlockRecorder                     |
+| 3    | 行业板块信息 (xysz)      | xysz    | 行业 Block + BlockStock                  |
+| 4    | 行业成分股映射 (xysz)    | xysz    |                                          |
+| 5    | 中国货币供应量 (Akshare) | akshare | ChinaMoneySupplyRecorder                 |
+| 6    | 复权因子 (xysz)          | xysz    | xyszStockAdjFactorRecorder               |
+| 7    | 日线 K 线数据 (xysz)     | xysz    | xyszStockKdataRecorder, level='1d'       |
+| 8    | 后复权日线 (xysz)        | xysz    | compute_and_save_xysz_hfq（近约 15 日）  |
+| 9    | 资产负债表 (xysz)        | xysz    | xyszBalanceSheetRecorder                 |
+| 10   | 利润表 (xysz)            | xysz    | xyszIncomeStatementRecorder              |
+| 11   | 现金流量表 (xysz)        | xysz    | xyszCashFlowRecorder                     |
+| 12   | 估值/市盈率 (xysz)       | xysz    | xyszValuationRecorder（PE/PB/PS/PCF 等） |
+| 13   | QMT 股票列表             | qmt     | QMTStockRecorder                         |
+| 14   | QMT 指数日线             | qmt     | QmtIndexRecorder（IMPORTANT_INDEX）      |
+| 15   | QMT 资产负债表           | qmt     | QmtBalanceSheetRecorder                  |
+| 16   | QMT 利润表               | qmt     | QmtIncomeStatementRecorder               |
+| 17   | QMT 现金流量表           | qmt     | QmtCashFlowRecorder                      |
+| 18   | QMT 日线 (不复权)        | qmt     | QMTStockKdataRecorder, bfq               |
+| 19   | QMT 日线 (后复权)        | qmt     | QMTStockKdataRecorder, hfq               |
 
 **说明**
 
@@ -149,19 +149,19 @@
 
 下表仅列出**本项目实际使用**的 provider 与 db_name 组合，便于排查“某类数据在哪个库、哪个 provider”。
 
-| db_name | 表/用途 | 已使用的 provider |
-|---------|---------|--------------------|
-| stock_meta | 股票列表 | xysz, qmt, em, exchange, joinquant, eastmoney |
-| block_meta | 板块/行业 | xysz, akshare, em, eastmoney, sina |
-| stock_1d_kdata | 股票日 K | xysz, qmt, em, joinquant |
-| stock_1d_hfq_kdata | 股票日 K 后复权 | xysz, qmt, em, joinquant |
-| stock_adj_factor | 复权因子 | xysz（仅 xysz 使用此 schema） |
-| index_1d_kdata | 指数日 K | em, sina, qmt |
-| finance | 资产负债表 / 利润表 / 现金流量表 | eastmoney, xysz, qmt |
-| valuation | 股票估值（PE/PB/PS 等） | joinquant, xysz |
-| holder | 股东户数、十大股东等 | eastmoney, joinquant, xysz |
-| dividend_financing | 分红、配股等 | eastmoney, xysz |
-| china_money_supply | 中国货币供应量 | akshare |
+| db_name            | 表/用途                          | 已使用的 provider                             |
+| ------------------ | -------------------------------- | --------------------------------------------- |
+| stock_meta         | 股票列表                         | xysz, qmt, em, exchange, joinquant, eastmoney |
+| block_meta         | 板块/行业                        | xysz, akshare, em, eastmoney, sina            |
+| stock_1d_kdata     | 股票日 K                         | xysz, qmt, em, joinquant                      |
+| stock_1d_hfq_kdata | 股票日 K 后复权                  | xysz, qmt, em, joinquant                      |
+| stock_adj_factor   | 复权因子                         | xysz（仅 xysz 使用此 schema）                 |
+| index_1d_kdata     | 指数日 K                         | em, sina, qmt                                 |
+| finance            | 资产负债表 / 利润表 / 现金流量表 | eastmoney, xysz, qmt                          |
+| valuation          | 股票估值（PE/PB/PS 等）          | joinquant, xysz                               |
+| holder             | 股东户数、十大股东等             | eastmoney, joinquant, xysz                    |
+| dividend_financing | 分红、配股等                     | eastmoney, xysz                               |
+| china_money_supply | 中国货币供应量                   | akshare                                       |
 
 ---
 
@@ -176,17 +176,17 @@
 
 ## 7. 脚本与代码位置速查
 
-| 用途 | 路径 |
-|------|------|
-| 每日任务入口 | `zvt_daily_job.py`（根目录） |
-| QMT 数据更新（独立于每日任务） | `scripts/update_qmt_data.py` |
-| xysz Parquet → ZVT 导入 | `scripts/import_xysz_parquet_to_zvt.py` |
-| xysz 后复权日线计算 | `scripts/compute_xysz_hfq_kdata.py` |
-| xysz Recorder（行情/财务/估值/股东等） | `src/zvt/recorders/xysz/` |
-| QMT Recorder（行情/财务/指数） | `src/zvt/recorders/qmt/` |
-| Akshare Recorder（板块/宏观） | `src/zvt/recorders/akshare/` |
-| 财务 / 估值 / 分红等 Domain 定义 | `src/zvt/domain/fundamental/` |
-| 重要指数代码列表 | `src/zvt/consts.py` → `IMPORTANT_INDEX` |
+| 用途                                   | 路径                                    |
+| -------------------------------------- | --------------------------------------- |
+| 每日任务入口                           | `zvt_daily_job.py`（根目录）            |
+| QMT 数据更新（独立于每日任务）         | `scripts/update_qmt_data.py`            |
+| xysz Parquet → ZVT 导入                | `scripts/import_xysz_parquet_to_zvt.py` |
+| xysz 后复权日线计算                    | `scripts/compute_xysz_hfq_kdata.py`     |
+| xysz Recorder（行情/财务/估值/股东等） | `src/zvt/recorders/xysz/`               |
+| QMT Recorder（行情/财务/指数）         | `src/zvt/recorders/qmt/`                |
+| Akshare Recorder（板块/宏观）          | `src/zvt/recorders/akshare/`            |
+| 财务 / 估值 / 分红等 Domain 定义       | `src/zvt/domain/fundamental/`           |
+| 重要指数代码列表                       | `src/zvt/consts.py` → `IMPORTANT_INDEX` |
 
 ---
 

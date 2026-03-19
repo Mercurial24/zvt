@@ -6,7 +6,7 @@ import platform
 from typing import List, Union, Type
 
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy import func, exists, and_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
@@ -66,6 +66,13 @@ def get_db_engine(
         db_engine = create_engine(
             "sqlite:///" + db_path, echo=False, json_serializer=lambda obj: json.dumps(obj, ensure_ascii=False)
         )
+
+        @event.listens_for(db_engine, "connect")
+        def _set_sqlite_wal(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.close()
+
         zvt_context.db_engine_map[engine_key] = db_engine
     return db_engine
 
@@ -316,6 +323,41 @@ def get_data(
     :param time_field:
     :return: results basing on return_type.
     """
+    # 智能路由逻辑：根据数据特征自动决定读取引擎
+    storage_type = getattr(data_schema, "storage_type", None)
+    if storage_type is None:
+        table_name = data_schema.__tablename__.lower()
+        # 自动路由规则：海量时序数据 (K线、Tick) 以及 预计算出来的因子库 默认走 Parquet
+        if any(kw in table_name for kw in ["kdata", "tick", "factor"]):
+            storage_type = "parquet"
+        else:
+            storage_type = "sqlite"
+
+    if storage_type == "parquet":
+        from zvt.contract.parquet_reader import ParquetReader
+        return ParquetReader.get_data(
+            data_schema=data_schema,
+            ids=ids,
+            entity_ids=entity_ids,
+            entity_id=entity_id,
+            codes=codes,
+            code=code,
+            level=level,
+            provider=provider,
+            columns=columns,
+            col_label=col_label,
+            return_type=return_type,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            filters=filters,
+            order=order,
+            limit=limit,
+            distinct=distinct,
+            index=index,
+            drop_index_col=drop_index_col,
+            time_field=time_field,
+        )
+
     if "providers" not in data_schema.__dict__:
         logger.error("no provider registered for: {}", data_schema)
     if not provider:
@@ -518,7 +560,8 @@ def df_to_db(
         return 0
 
     if drop_duplicates and df.duplicated(subset="id").any():
-        logger.warning(f"remove duplicated:{df[df.duplicated()]}")
+        dup_count = df.duplicated(subset="id").sum()
+        logger.warning("remove %d duplicated rows (first dup id: %s)", dup_count, df.loc[df.duplicated(subset="id"), "id"].iloc[0])
         df = df.drop_duplicates(subset="id", keep="last")
 
     schema_cols = get_schema_columns(data_schema)

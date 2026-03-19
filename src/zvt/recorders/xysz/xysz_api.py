@@ -8,12 +8,17 @@ from typing import Optional, List, Dict, Any
 
 import pandas as pd
 
-try:
-    import AmazingData as ad
-except ImportError:
-    ad = None
-
 logger = logging.getLogger(__name__)
+
+
+def _get_ad():
+    """延迟导入 AmazingData，避免模块加载时就初始化 C++ SWIG 库。"""
+    try:
+        import AmazingData as ad
+        return ad
+    except ImportError:
+        return None
+
 
 class AmazingDataClient:
     """
@@ -21,9 +26,10 @@ class AmazingDataClient:
     """
 
     def __init__(self, calendar: Optional[List] = None):
+        ad = _get_ad()
         if ad is None:
             raise ImportError("Please install AmazingData package first.")
-            
+
         self._base_data = None
         self._info_data = None
         self._market_data = None
@@ -38,12 +44,14 @@ class AmazingDataClient:
         host: str,
         port: int,
     ) -> None:
+        ad = _get_ad()
         if ad is None:
             raise ImportError("Please install AmazingData package first.")
         ad.login(username=username, password=password, host=host, port=port)
 
     @staticmethod
     def logout(username: str) -> None:
+        ad = _get_ad()
         if ad:
             ad.logout(username=username)
 
@@ -52,13 +60,13 @@ class AmazingDataClient:
     @property
     def base_data(self) -> Any:
         if self._base_data is None:
-            self._base_data = ad.BaseData()
+            self._base_data = _get_ad().BaseData()
         return self._base_data
 
     @property
     def info_data(self) -> Any:
         if self._info_data is None:
-            self._info_data = ad.InfoData()
+            self._info_data = _get_ad().InfoData()
         return self._info_data
 
     def _get_market_data(self) -> Any:
@@ -66,7 +74,7 @@ class AmazingDataClient:
             cal = self._calendar
             if cal is None:
                 cal = self.base_data.get_calendar()
-            self._market_data = ad.MarketData(cal)
+            self._market_data = _get_ad().MarketData(cal)
         return self._market_data
 
     # ------------------------------- 3.5.2 基础数据 -------------------------------

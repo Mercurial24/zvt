@@ -8,6 +8,7 @@
 |------|------|
 | [DATA_LAYER_DASHBOARD.md](DATA_LAYER_DASHBOARD.md) | **数据层看板**：数据库全貌、各数据源（xysz / QMT / Akshare）数据从哪儿来、哪些已落盘、每日更新流程、脚本与代码位置速查 |
 | [XYSZ_PARQUET_IMPORT.md](XYSZ_PARQUET_IMPORT.md) | 星河数智 Parquet 数据湖导入 ZVT 的说明与使用方法 |
+| [CRON_SCHEDULED_TASKS.md](CRON_SCHEDULED_TASKS.md) | **定时任务配置**：cron 调度说明、日志查看、任务管理、维护方法 |
 | [AGENT_GUIDE_QMT_LINUX.md](AGENT_GUIDE_QMT_LINUX.md) | QMT 在 Linux 下的 RPC 接入说明（面向 AI Agent 的上下文） |
 | [QMT_FORWARD_SERVICE.md](QMT_FORWARD_SERVICE.md) | QMT 转发服务（Windows ↔ Ubuntu）：协议、使用步骤、Redis 双通道等 |
 

@@ -7,7 +7,14 @@ from zvt.api.kdata import get_kdata_schema
 from zvt.contract import IntervalLevel, AdjustType
 from zvt.utils.time_utils import to_pd_timestamp, to_date_time_str
 import pandas as pd
-import AmazingData as ad
+
+
+def _get_ad():
+    try:
+        import AmazingData as ad
+        return ad
+    except ImportError:
+        return None
 
 class xyszStockKdataRecorder(FixedCycleDataRecorder):
     provider = 'xysz'
@@ -88,6 +95,7 @@ class xyszStockKdataRecorder(FixedCycleDataRecorder):
         
         xysz_code = f"{entity.code}.{entity.exchange.upper()}"
         
+        ad = _get_ad()
         period = ad.constant.Period.day.value
         if self.level == IntervalLevel.LEVEL_1WEEK:
             period = ad.constant.Period.week.value

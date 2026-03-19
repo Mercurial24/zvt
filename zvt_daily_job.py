@@ -9,41 +9,30 @@ ZVT 每日数据自动更新与数据湖同步脚本
 import gc
 import logging
 import os
+import subprocess
 import sys
 import time
 import traceback
-import argparse
-import subprocess
-from datetime import datetime
 
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
+import pandas as pd
 
-from zvt.recorders.xysz.meta.xysz_stock_meta_recorder import xyszStockMetaRecorder
-from zvt.recorders.xysz.meta.xysz_industry_recorder import xyszIndustryBlockRecorder, xyszIndustryBlockStockRecorder
-from zvt.recorders.akshare.meta.akshare_block_recorder import AkshareBlockRecorder
-from zvt.recorders.xysz.quotes.xysz_stock_kdata_recorder import xyszStockKdataRecorder
-from zvt.recorders.xysz.quotes.xysz_stock_adj_factor_recorder import xyszStockAdjFactorRecorder
-from zvt.recorders.xysz.finance.xysz_finance_recorder import (
-    xyszBalanceSheetRecorder, 
-    xyszIncomeStatementRecorder, 
-    xyszCashFlowRecorder
-)
-from zvt.recorders.xysz.finance.xysz_valuation_recorder import xyszValuationRecorder
+from zvt.consts import IMPORTANT_INDEX
+from zvt.informer.wechat_webhook import WechatWebhookInformer
 from zvt.recorders.akshare.macro.china_money_supply_recorder import ChinaMoneySupplyRecorder
-from zvt.recorders.qmt.meta.qmt_stock_meta_recorder import QMTStockRecorder
-from zvt.recorders.qmt.quotes.qmt_kdata_recorder import QMTStockKdataRecorder
-from zvt.recorders.qmt.index.qmt_index_recorder import QmtIndexRecorder
+from zvt.recorders.akshare.meta.akshare_block_recorder import AkshareBlockRecorder
 from zvt.recorders.qmt.finance.qmt_finance_recorder import (
-    QmtBalanceSheetRecorder, 
-    QmtIncomeStatementRecorder, 
+    QmtBalanceSheetRecorder,
     QmtCashFlowRecorder,
+    QmtIncomeStatementRecorder,
     QmtValuationRecorder,
 )
-from zvt.consts import IMPORTANT_INDEX
-from zvt.contract import AdjustType
-from zvt.informer.wechat_webhook import WechatWebhookInformer
+from zvt.recorders.qmt.index.qmt_index_recorder import QmtIndexRecorder
+from zvt.recorders.qmt.meta.qmt_stock_meta_recorder import QMTStockRecorder
+from zvt.recorders.xysz.finance.xysz_valuation_recorder import xyszValuationRecorder
 from scripts.compute_xysz_hfq_kdata import compute_and_save_xysz_hfq
+from scripts.daily_update_qmt import run_full_update as run_qmt_data_lake
+from scripts.daily_update_xysz import run_full_update as run_xysz_data_lake
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ZvtDailyJob")
@@ -58,43 +47,89 @@ def _format_elapsed(seconds: float) -> str:
     return f"{minutes}m{secs:.0f}s"
 
 
-def run_legacy_daily_update():
-    """运行旧版的 daily_update.py 以更新 Parquet 数据湖，实时流式打印子脚本输出"""
-    legacy_script = "/data/code/my_quant_begin/data_engine_xysz/daily_update.py"
-    logger.info(f"正在执行旧版数据湖增量更新: {legacy_script}")
-
-    # 注意：不要无界 append 到 list，子进程输出过多时会爆内存；仅打印或保留最后几行即可
-    stdout_lines = []
-    stderr_lines = []
-
-    proc = subprocess.Popen(
-        [sys.executable, "-u", legacy_script],  # -u 禁用 Python 内部输出缓冲
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,  # 行缓冲
-    )
-
-    # 实时读取并打印 stdout（仅打印，不长期保存全部行以防 OOM）
-    for line in proc.stdout:
-        line_stripped = line.rstrip("\n")
-        print(f"[daily_update] {line_stripped}", flush=True)
-        stdout_lines.append(line_stripped)
-
-    # 等待进程结束，收集 stderr
-    _, stderr_text = proc.communicate()
-    for line in stderr_text.splitlines():
-        stderr_lines.append(line)
-
-    if proc.returncode != 0:
-        raise Exception(f"Parquet 数据湖更新失败 (exit={proc.returncode}): \n" + "\n".join(stderr_lines))
-
-    return "\n".join(stdout_lines)
+def run_parquet_data_lake_updates():
+    """直接调用 daily_update 的 run_full_update 及 xysz 后复权日线，更新 Parquet 数据湖。"""
+    if run_xysz_data_lake is not None:
+        logger.info("正在执行数据湖增量更新: daily_update_xysz")
+        run_xysz_data_lake()
+        logger.info("正在执行数据湖增量更新: xysz 后复权日线")
+        compute_and_save_xysz_hfq(start_timestamp=pd.Timestamp.now() - pd.Timedelta(days=15))
+    else:
+        logger.warning("未找到 daily_update_xysz，跳过")
+    if run_qmt_data_lake is not None:
+        logger.info("正在执行数据湖增量更新: daily_update_qmt")
+        run_qmt_data_lake()
+    else:
+        logger.warning("未找到 daily_update_qmt，跳过")
+    return ""
 
 
 # 导入源：数据湖 Parquet 根目录（阶段1 daily_update 写入的目录），与 import_xysz_parquet_to_zvt.py 默认一致。
 # 可通过环境变量 XYSZ_PARQUET_BASE_DIR 覆盖。
-XYSZ_PARQUET_BASE_DIR = os.environ.get("XYSZ_PARQUET_BASE_DIR", "/data/stock_data/xysz_data/base_data")
+XYSZ_PARQUET_BASE_DIR = os.environ.get("XYSZ_PARQUET_BASE_DIR", "/mnt/point/stock_data/xysz_data/base_data")
+
+
+def _flush_all_sessions():
+    """关闭并清除所有全局缓存的 SQLite session，释放数据库写锁。"""
+    from zvt.contract import zvt_context
+
+    for key, session in list(zvt_context.sessions.items()):
+        try:
+            session.close()
+        except Exception:
+            pass
+    zvt_context.sessions.clear()
+
+
+def _cleanup_amazingdata_sdk():
+    """注销 AmazingData SDK 并清理全局状态，防止其 C++ 后台线程干扰后续 QMT 任务。
+
+    AmazingData SDK 的 SWIG C++ 层在长时间运行后会累积内部状态，
+    导致 IGMDSpi.OnLog 回调触发 Swig::DirectorMethodException 崩溃。
+    """
+    try:
+        import zvt.recorders.xysz.xysz_api as xysz_api_mod
+        user = os.environ.get("AMAZING_DATA_USER", "10100223966")
+        if xysz_api_mod._client_instance is not None:
+            try:
+                xysz_api_mod.AmazingDataClient.logout(user)
+                logger.info("AmazingData SDK 已注销登录")
+            except Exception as e:
+                logger.warning("AmazingData logout 异常（可忽略）: %s", e)
+            xysz_api_mod._client_instance = None
+    except Exception:
+        pass
+
+    try:
+        import sys
+        ad_modules = [k for k in sys.modules if k.startswith("AmazingData") or k == "tgw"]
+        for mod_name in ad_modules:
+            del sys.modules[mod_name]
+        if ad_modules:
+            logger.info("已从 sys.modules 卸载: %s", ad_modules)
+    except Exception:
+        pass
+
+    gc.collect()
+
+
+def _run_recorder_task(name, factory, summary, success_count, fail_count):
+    """执行单个 Recorder 任务，更新 summary 与计数，返回 (success_count, fail_count)。"""
+    t0 = time.time()
+    try:
+        logger.info("正在执行任务: %s...", name)
+        recorder = factory() if callable(factory) else factory
+        if hasattr(recorder, "run"):
+            recorder.run()
+        summary.append(f"✅ {name} ({_format_elapsed(time.time() - t0)})")
+        return success_count + 1, fail_count
+    except Exception as e:
+        elapsed = _format_elapsed(time.time() - t0)
+        summary.append(f"❌ {name} 失败 ({elapsed}): {e}")
+        logger.exception("%s 失败: %s", name, e)
+        return success_count, fail_count + 1
+    finally:
+        _flush_all_sessions()
 
 
 def run_import_xysz_parquet_to_zvt(base_dir: str = None):
@@ -125,10 +160,9 @@ def run_import_xysz_parquet_to_zvt(base_dir: str = None):
                 "--base-dir",
                 base_dir,
                 "--only",
-                "klines_daily,balance_sheet,income,cash_flow,holder_num,share_holder,dividend,right_issue,industry_base_info,industry_constituent",
-                # "klines_daily,",
-
-                "--count-rows",  # klines_daily 为目录时预扫总行数，显示百分比进度条（会多读一遍）
+                # 股票基础信息由阶段1 stock_meta.parquet 导入；K 线不导入 SQLite，仅保留在 Parquet
+                "stock_meta,balance_sheet,income,cash_flow,holder_num,share_holder,dividend,right_issue,industry_base_info,industry_constituent",
+                "--count-rows",
             ],
             cwd=script_dir,
             stdout=subprocess.PIPE,
@@ -163,28 +197,12 @@ def run_daily_job():
     fail_count = 0
     summary = []
     
-    # 阶段 1: 更新 Parquet 数据湖 (原始格式)
+    # 阶段 1: 更新 Parquet 数据湖
     try:
         t0 = time.time()
-        stdout_text = run_legacy_daily_update()
+        run_parquet_data_lake_updates()
         elapsed = _format_elapsed(time.time() - t0)
-        logger.info("任务 Parquet 数据湖更新 执行成功。")
-        
-        # 提取关键更新信息以发送至微信
-        detail_lines = []
-        for line in stdout_text.splitlines():
-            line = line.strip()
-            # 过滤包含重要执行结果的行（通常以 [模块名] 开头）
-            if line.startswith("[") and any(kw in line for kw in ["保存", "覆盖", "跳过", "合并"]):
-                # 排除部分纯过程打印
-                if "批次" in line and "已下载" in line:
-                    continue
-                detail_lines.append(f"    • {line}")
-                
         summary.append(f"✅ Parquet 数据湖更新 ({elapsed})")
-        if detail_lines:
-            summary.extend(detail_lines)
-            
         success_count += 1
     except Exception as e:
         elapsed = _format_elapsed(time.time() - t0)
@@ -198,7 +216,7 @@ def run_daily_job():
     # 2a: 从数据湖 Parquet 导入能导入的财务数据，避免重复下载和重复缓存 h5
     try:
         t0 = time.time()
-        logger.info("正在执行: 数据湖→ZVT 导入 (klines_daily, 财务三表, holder_num, share_holder, dividend, right_issue, industry_base_info, industry_constituent)...")
+        logger.info("正在执行: 数据湖→ZVT 导入 (stock_meta, 财务三表, holder_num, share_holder, dividend, right_issue, industry)...")
         ok = run_import_xysz_parquet_to_zvt()
         elapsed = _format_elapsed(time.time() - t0)
         if ok:
@@ -211,52 +229,32 @@ def run_daily_job():
         logger.exception("数据湖→ZVT 导入异常: %s", e)
         summary.append(f"⚠️ 数据湖→ZVT 导入 异常 ({elapsed}): {e}")
 
-    # 2b: 运行 Recorder，只会对数据湖不存在或 ZVT 仍缺的数据拉取（evaluate_start_end_size_timestamps 会跳过已满的实体）
-    # 注：股票基础信息/板块/行业/货币供应量/复权因子 数据湖 import 脚本未实现，仅通过 API 拉取
-    import pandas as pd
-    tasks = [
-        ("股票基础信息 (xysz)", xyszStockMetaRecorder),
+    # 2b: 运行 Recorder，对数据湖不存在或 ZVT 仍缺的数据拉取
+    # 股票基础信息、财务三表、行业板块/成分股已由 2a 从数据湖 parquet 导入，此处不再重复拉取
+    xysz_tasks = [
         ("板块基础信息 (Akshare)", AkshareBlockRecorder),
-        ("行业板块信息 (xysz)", xyszIndustryBlockRecorder),
-        ("行业成分股映射 (xysz)", xyszIndustryBlockStockRecorder),
         ("中国货币供应量 (Akshare)", ChinaMoneySupplyRecorder),
-        ("日线 K 线数据 (xysz)", lambda: xyszStockKdataRecorder(level='1d')),
-        ("后复权日线 (xysz)", lambda: compute_and_save_xysz_hfq(start_timestamp=pd.Timestamp.now() - pd.Timedelta(days=15))),
-        ("资产负债表 (xysz)", xyszBalanceSheetRecorder),
-        ("利润表 (xysz)", xyszIncomeStatementRecorder),
-        ("现金流量表 (xysz)", xyszCashFlowRecorder),
         ("xysz 估值", lambda: xyszValuationRecorder(sleeping_time=0)),
-        # QMT 数据更新任务
+    ]
+    for name, factory in xysz_tasks:
+        success_count, fail_count = _run_recorder_task(name, factory, summary, success_count, fail_count)
+        gc.collect()
+
+    # xysz 任务全部完成后，注销 AmazingData SDK 并卸载 C++ 模块，
+    # 避免其后台线程在 QMT 长时间任务运行期间触发 IGMDSpi.OnLog 崩溃
+    _cleanup_amazingdata_sdk()
+
+    qmt_tasks = [
         ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
         ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
         ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
         ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
         ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
-        ("QMT 日线 (不复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.bfq, sleeping_time=0.2, ignore_failed=True)),
-        ("QMT 日线 (后复权)", lambda: QMTStockKdataRecorder(adjust_type=AdjustType.hfq, sleeping_time=0.2, ignore_failed=True)),
         ("QMT 估值", lambda: QmtValuationRecorder(sleeping_time=0)),
     ]
-
-    for name, recorder_factory in tasks:
-        t0 = time.time()
-        try:
-            logger.info(f"正在执行任务: {name}...")
-            recorder = recorder_factory() if callable(recorder_factory) else recorder_factory
-            if hasattr(recorder, 'run'):
-                recorder.run()
-            elapsed = _format_elapsed(time.time() - t0)
-            summary.append(f"✅ {name} ({elapsed})")
-            success_count += 1
-        except Exception as e:
-            elapsed = _format_elapsed(time.time() - t0)
-            error_msg = f"❌ {name} 失败 ({elapsed}): {str(e)}"
-            logger.error(error_msg)
-            logger.error(traceback.format_exc())
-            summary.append(error_msg)
-            fail_count += 1
-        finally:
-            # 每项任务结束后主动回收内存，避免连续跑多个 Recorder 时内存累积导致 OOM
-            gc.collect()
+    for name, factory in qmt_tasks:
+        success_count, fail_count = _run_recorder_task(name, factory, summary, success_count, fail_count)
+        gc.collect()
     
     # 生成并发送最终报告
     total_elapsed = _format_elapsed(time.time() - job_start)
@@ -269,38 +267,12 @@ def run_daily_job():
         f"成功: {success_count} | 失败: {fail_count}\n\n"
         f"任务明细:\n" + "\n".join(summary)
     )
-    logger.info(f"更新报告:\n{report_content}")
+    logger.info("更新报告:\n%s", report_content)
     try:
         informer.send_message(content=report_content)
     except Exception as e:
-        logger.error(f"发送微信报告失败: {e}")
+        logger.error("发送微信报告失败: %s", e)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='ZVT Daily Data Update Job')
-    parser.add_argument('--now', action='store_true', help='立即执行一次更新任务')
-    parser.add_argument('--time', type=str, default='16:30', help='每日定时执行的时间 (格式 HH:MM, 默认 16:30)')
-    
-    args = parser.parse_args()
-
-    if args.now:
-        logger.info("响应 --now 参数，立即开始执行...")
-        run_daily_job()
-        sys.exit(0)
-
-    # 设置定时任务
-    scheduler = BlockingScheduler()
-    hour, minute = args.time.split(':')
-    
-    logger.info(f"📅 定时任务已启动，将在每天 {args.time} (周一至周五) 执行")
-    
-    scheduler.add_job(
-        run_daily_job, 
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week='mon-fri'),
-        id='zvt_daily_update'
-    )
-    
-    try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("任务已手动停止")
+    run_daily_job()

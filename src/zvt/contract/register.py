@@ -99,25 +99,39 @@ def register_schema(
         engine = get_db_engine(provider, db_name=db_name)
 
         # create index for 'timestamp','entity_id','code','report_period','updated_timestamp
-        for table_name, table in iter(schema_base.metadata.tables.items()):
-            # auto add new columns
-            db_meta = MetaData()
+        # auto add new columns
+        db_meta = MetaData()
+        try:
             db_meta.reflect(bind=engine)
+        except Exception as e:
+            logger.error(f"Failed to reflect {engine.url}: {e}")
+            continue
+
+        for table_name, table in iter(schema_base.metadata.tables.items()):
+            if table_name not in db_meta.tables:
+                continue
             db_table = db_meta.tables[table_name]
             existing_columns = [c.name for c in db_table.columns]
             added_columns = [c for c in table.columns if c.name not in existing_columns]
             index_list = []
             with engine.connect() as con:
-                # FIXME: close WAL mode for saving space, most of time no need to write in multiple process
-                if db_name in ("zvt_info", "stock_news", "stock_tags", "stock_quote"):
-                    con.execute(text("PRAGMA journal_mode=WAL;"))
-                    con.execute(text("PRAGMA journal_size_limit=1073741824;"))
-                else:
-                    con.execute(text("PRAGMA journal_mode=DELETE;"))
+                # PRAGMA operations can hang on network mounts, wrap in try/except or set timeouts if possible
+                try:
+                    # FIXME: close WAL mode for saving space, most of time no need to write in multiple process
+                    if db_name in ("zvt_info", "stock_news", "stock_tags", "stock_quote"):
+                        con.execute(text("PRAGMA journal_mode=WAL;"))
+                        con.execute(text("PRAGMA journal_size_limit=1073741824;"))
+                    else:
+                        con.execute(text("PRAGMA journal_mode=DELETE;"))
+                except Exception as e:
+                    logger.warning(f"Failed to set PRAGMA for {db_name}: {e}")
 
-                rs = con.execute(text("PRAGMA INDEX_LIST('{}')".format(table_name)))
-                for row in rs:
-                    index_list.append(row[1])
+                try:
+                    rs = con.execute(text("PRAGMA INDEX_LIST('{}')".format(table_name)))
+                    for row in rs:
+                        index_list.append(row[1])
+                except Exception as e:
+                    logger.warning(f"Failed to get Index List for {table_name}: {e}")
 
                 try:
                     # Using migration tool like Alembic is too complex
