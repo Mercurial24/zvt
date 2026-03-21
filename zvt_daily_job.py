@@ -245,11 +245,11 @@ def run_daily_job():
     _cleanup_amazingdata_sdk()
 
     qmt_tasks = [
-        ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
-        ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
-        ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
-        ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
-        ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
+        # ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
+        # ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
+        # ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
+        # ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
+        # ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
         ("QMT 估值", lambda: QmtValuationRecorder(sleeping_time=0)),
     ]
     for name, factory in qmt_tasks:

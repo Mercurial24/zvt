@@ -14,7 +14,7 @@ from zvt.domain import (
     BalanceSheet,
     CashFlowStatement,
 )
-from zvt.contract.api import df_to_db
+from zvt.contract.api import df_to_db, get_data
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,12 +35,12 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
 
         # 1. 行情（含换手率）
         kdata_df = Stock1dKdata.query_data(
-            entity_id=entity_id,
-            provider="xysz",
-            start_timestamp=start,
-            end_timestamp=end,
-            columns=["timestamp", "close", "volume", "turnover_rate"],
-        )
+                entity_id=entity_id,
+                provider="xysz",
+                start_timestamp=start,
+                end_timestamp=end,
+                columns=["timestamp", "close", "volume"],
+            )
         if kdata_df is None or kdata_df.empty:
             self.logger.warning(f"No kdata for {entity_id}")
             return
@@ -90,15 +90,18 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         if kdata_df.empty:
             return
 
-        # 预设 ts_merge
-        if "timestamp" in kdata_df.columns:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df["timestamp"]).dt.normalize()
-        else:
-            kdata_df["ts_merge"] = pd.to_datetime(kdata_df.index.get_level_values("timestamp")).dt.normalize()
+        # 预设 ts_merge，统一精度为 ns 避免 merge_asof 报 dtype 不匹配
+        def _to_ts_merge(series_or_index):
+            return pd.to_datetime(series_or_index).astype("datetime64[ns]").dt.normalize()
 
-        income_df["ts_merge"] = pd.to_datetime(income_df["timestamp"]).dt.normalize()
-        balance_df["ts_merge"] = pd.to_datetime(balance_df["timestamp"]).dt.normalize()
-        cashflow_df["ts_merge"] = pd.to_datetime(cashflow_df["timestamp"]).dt.normalize()
+        if "timestamp" in kdata_df.columns:
+            kdata_df["ts_merge"] = _to_ts_merge(kdata_df["timestamp"])
+        else:
+            kdata_df["ts_merge"] = _to_ts_merge(kdata_df.index.get_level_values("timestamp"))
+
+        income_df["ts_merge"] = _to_ts_merge(income_df["timestamp"])
+        balance_df["ts_merge"] = _to_ts_merge(balance_df["timestamp"])
+        cashflow_df["ts_merge"] = _to_ts_merge(cashflow_df["timestamp"])
 
         # merge_asof requires no nulls in 'on' column
         kdata_df = kdata_df.dropna(subset=["ts_merge"])
@@ -190,11 +193,15 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
             df_merged["circulating_cap"] = float_share
             df_merged["circulating_market_cap"] = np.where(close > 0, close * float_share, np.nan)
         else:
+            float_share = None
             df_merged["circulating_market_cap"] = np.nan
             df_merged["circulating_cap"] = np.nan
 
-        # 换手率：直接来自 K 线
-        df_merged["turnover_ratio"] = df_merged.get("turnover_rate", np.nan)
+        # 换手率：volume / 流通股本
+        if float_share is not None and float_share > 0:
+            df_merged["turnover_ratio"] = np.round(df_merged["volume"] / float_share, 4)
+        else:
+            df_merged["turnover_ratio"] = np.nan
 
         val_list = []
         for _, row in df_merged.iterrows():

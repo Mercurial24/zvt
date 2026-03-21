@@ -106,7 +106,7 @@ class xyszDividendDetailRecorder(xyszDividendFinancingRecorder):
     def _get_column_map(self):
         # Doc: MARKET_CODE, DIV_PROGRESS, DVD_PER_SHARE_STK, DATE_EQY_RECORD, DATE_EX, DATE_DVD_PAYOUT
         return {
-            "DATE_EqY_RECORD": "record_date", # 股权登记日
+            "DATE_EQY_RECORD": "record_date", # 股权登记日
             "DATE_EX": "dividend_date", # 除权除息日
             "DVD_PER_SHARE_STK": "dividend", 
         }
@@ -120,9 +120,9 @@ class xyszRightsIssueDetailRecorder(xyszDividendFinancingRecorder):
     def _get_column_map(self):
         return {
              "ANN_DATE": "timestamp",
-             "RATIO": "rights_issues", # 配股比例?
+             "RATIO": "rights_issues", # 配股比例
              "PRICE": "rights_issue_price", 
-             "AMT_REAL": "rights_raising_fund"
+             "COLLECTION_FUND": "rights_raising_fund"
         }
 
 if __name__ == "__main__":

@@ -149,34 +149,27 @@ def get_kdata(
     start_time = to_date_time_str(start_timestamp, fmt="YYYYMMDD")
     end_time = to_date_time_str(end_timestamp, fmt="YYYYMMDD")
 
-    # On Linux, we assume data is downloaded on Windows server side
-    # download_history is ignored or handled on Windows side beforehand
-    
-    records = xtdata.get_market_data(
-        stock_list=[code],
-        period=period,
-        start_time=start_time,
-        end_time=end_time,
-        dividend_type=_to_qmt_dividend_type(adjust_type=adjust_type),
-        fill_data=False,
-    )
-
-    if not records:
+    # 使用 get_market_data_ex，返回 {code: DataFrame}，每只票独立一个完整的 K 线表
+    try:
+        records = xtdata.get_market_data_ex(
+            [],
+            [code],
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+            dividend_type=_to_qmt_dividend_type(adjust_type=adjust_type),
+        )
+    except Exception as e:
+        logger.error(f"get_market_data_ex failed for {code}: {e}")
         return None
 
-    dfs = []
-    for col in records:
-        df = records[col].T
-        df.columns = [col]
-        dfs.append(df)
-    
-    if not dfs:
+    if not records or code not in records:
         return None
 
-    df = pd.concat(dfs, axis=1)
-    if not df.empty and "volume" in df.columns:
-        df["volume"] = df["volume"] * 100
-    
+    df = records[code]
+    if df is None or df.empty:
+        return None
+
     return df
 
 

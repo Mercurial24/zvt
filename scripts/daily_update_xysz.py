@@ -558,13 +558,52 @@ def _merge_dataframe_to_path(
 #  业务更新函数
 # ============================================================================
 
+KLINE_YEARLY_PATH = "/mnt/point/stock_data/xysz_data/base_data/klines_yearly"
+
+
+def _update_yearly_kline_file(year: int, new_df: "pd.DataFrame") -> None:
+    """
+    将新的 K 线数据合并写入对应年度的 Parquet 文件。
+    - 文件内按 (code, kline_time) 排序，确保行组统计有意义（支持跳过）
+    - 以 (code, date) 为唯一键，新数据覆盖旧数据
+    """
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    os.makedirs(KLINE_YEARLY_PATH, exist_ok=True)
+    dst_path = os.path.join(KLINE_YEARLY_PATH, f"year={year}.parquet")
+    tmp_path = dst_path + ".tmp"
+
+    if os.path.exists(dst_path):
+        try:
+            old_df = pq.read_table(dst_path).to_pandas()
+            combined = pd.concat([old_df, new_df], axis=0, ignore_index=True)
+            del old_df
+        except Exception as e:
+            print(f"  [日线][警告] 读取旧文件失败({e})，仅保留新数据")
+            combined = new_df
+    else:
+        combined = new_df
+
+    key_cols = ["code", "date"] if "date" in combined.columns else ["code", "kline_time"]
+    combined = combined.drop_duplicates(subset=key_cols, keep="last")
+    # 按 code 排序是关键：使得 Parquet 行组统计(min/max code)有效，查单股时能跳过无关行组
+    combined = combined.sort_values(["code", "kline_time"]).reset_index(drop=True)
+
+    table = pa.Table.from_pandas(combined, preserve_index=False)
+    pq.write_table(table, tmp_path, row_group_size=100_000, compression="snappy")
+    os.replace(tmp_path, dst_path)
+    print(f"  [日线] year={year}.parquet 已更新: {len(combined)} 行")
+    del combined, table
+
+
 def update_klines_daily(client) -> list[str]:
-    """增量更新日线：拉最近 N 个交易日，分区写入 parquet。"""
+    """增量更新日线：拉最近 N 个交易日，按年写入 Parquet（klines_yearly/）。"""
     import AmazingData as ad
     import pandas as pd
     from tqdm import tqdm
 
-    _ensure_dir(KLINE_DAILY_PATH)
     calendar = client.get_calendar(data_type="str", market="SH")
     if not calendar:
         print("[日线] 未获取到交易日历，跳过")
@@ -611,28 +650,23 @@ def update_klines_daily(client) -> list[str]:
         df["code"] = code
         parts.append(df)
 
+    if not parts:
+        print("[日线] 所有批次数据处理后为空")
+        return all_codes
+
     out = pd.concat(parts, axis=0, ignore_index=True)
     out = out.drop_duplicates(subset=["code", "date"], keep="last")
     out["code"] = out["code"].astype("string")
+    out["year"] = pd.to_datetime(out["kline_time"]).dt.year
 
-    try:
-        out.to_parquet(
-            KLINE_DAILY_PATH,
-            index=False,
-            partition_cols=["date"],
-            engine="pyarrow",
-            existing_data_behavior="delete_matching",
-        )
-    except TypeError:
-        out.to_parquet(
-            KLINE_DAILY_PATH,
-            index=False,
-            partition_cols=["date"],
-            engine="pyarrow",
-        )
+    # 按年分组，逐年写入（通常只涉及当年，偶尔涉及跨年更新的两年）
+    for year, year_df in out.groupby("year"):
+        year_df = year_df.drop(columns=["year"]).reset_index(drop=True)
+        _update_yearly_kline_file(int(year), year_df)
 
-    print(f"[日线] 已通过分区模式追加保存，本次更新 {len(out)} 条")
+    print(f"[日线] 已更新年度 Parquet，本次涉及 {out['year'].nunique()} 个年份，共 {len(out)} 条")
     return all_codes
+
 
 
 def update_financial(client, codes: list[str] | None = None) -> None:
@@ -840,11 +874,11 @@ def _build_cap_map_from_equity_structure(client, codes: list[str]) -> dict:
             )
         except Exception as e:
             print(f"[股票基础信息] 股本结构批次 {batch_idx}/{n_batches} 获取失败: {e}")
-            continue
-        finally:
             _close_all_hdf5_handles()
+            continue
 
         if eq_df is None or (isinstance(eq_df, pd.DataFrame) and eq_df.empty):
+            _close_all_hdf5_handles()
             continue
 
         if isinstance(eq_df, dict):
@@ -876,6 +910,7 @@ def _build_cap_map_from_equity_structure(client, codes: list[str]) -> dict:
             }
         print(f"[股票基础信息] 股本结构批次 {batch_idx}/{n_batches}: 获取 {len(batch)} 只")
         del eq_df
+        _close_all_hdf5_handles()
         _release_memory()
 
     return cap_map
@@ -914,73 +949,31 @@ def update_stock_meta(client) -> None:
                 print(f"[股票基础信息] 批次 {batch_idx}/{n_batches}: get_stock_basic 返回空，跳过")
                 continue
 
-            df = df.rename(columns={
-                "SECURITY_NAME": "name",
-                "LISTDATE": "list_date",
-                "DELISTDATE": "end_date",
-            })
-
+            float_caps = []
+            total_caps = []
             for _, row in df.iterrows():
                 market_code = row.get("MARKET_CODE")
-                if not market_code:
-                    continue
-                parts = str(market_code).split(".")
-                code = parts[0]
-                exchange = "unknown"
-                if len(parts) > 1:
-                    suffix = parts[1].upper()
-                    if suffix == "SH":
-                        exchange = "sh"
-                    elif suffix == "SZ":
-                        exchange = "sz"
-                    elif suffix == "BJ":
-                        exchange = "bj"
-                if exchange == "unknown":
-                    if code.startswith("6"):
-                        exchange = "sh"
-                    elif code.startswith("0") or code.startswith("3"):
-                        exchange = "sz"
-                    elif code.startswith("4") or code.startswith("8"):
-                        exchange = "bj"
-                entity_id = f"stock_{exchange}_{code}"
-
-                try:
-                    list_ts = pd.Timestamp(str(row.get("list_date", "")))
-                except Exception:
-                    list_ts = pd.NaT
-                try:
-                    end_ts = pd.Timestamp(str(row.get("end_date", ""))) if row.get("end_date") else None
-                except Exception:
-                    end_ts = None
-
                 cap = cap_map.get(market_code) or {}
                 close = close_map.get(market_code) if close_map else None
-                # 按 schema 存流通市值、总市值；有最新价时 市值 = close × 股本，否则不填
                 float_share = cap.get("float_share")
                 tot_share = cap.get("tot_share")
                 if close is not None and isinstance(close, (int, float)) and close == close:
-                    rec_float_cap = float(close) * float(float_share) if float_share is not None else None
-                    rec_total_cap = float(close) * float(tot_share) if tot_share is not None else None
+                    float_caps.append(float(close) * float(float_share) if float_share is not None else None)
+                    total_caps.append(float(close) * float(tot_share) if tot_share is not None else None)
                 else:
-                    rec_float_cap = None
-                    rec_total_cap = None
-                rec = {
-                    "MARKET_CODE": market_code,
-                    "entity_id": entity_id,
-                    "exchange": exchange,
-                    "code": code,
-                    "name": row.get("name"),
-                    "list_date": list_ts,
-                    "end_date": end_ts,
-                    "timestamp": list_ts,
-                    "float_cap": rec_float_cap,
-                    "total_cap": rec_total_cap,
-                }
-                all_records.append(rec)
+                    float_caps.append(None)
+                    total_caps.append(None)
+            
+            df["FLOAT_CAP"] = float_caps
+            df["TOTAL_CAP"] = total_caps
 
-            print(f"[股票基础信息] 批次 {batch_idx}/{n_batches}: {len(batch)} 只 -> 累计 {len(all_records)} 条")
+            all_records.append(df.copy())
+            print(f"[股票基础信息] 批次 {batch_idx}/{n_batches}: 获取了 {len(df)} 只")
+        except Exception as e:
+            print(f"[股票基础信息] 批次 {batch_idx}/{n_batches}: get_stock_basic 调用异常: {e}")
         finally:
-            del df
+            if df is not None:
+                del df
             _close_all_hdf5_handles()
             _release_memory()
 
@@ -988,8 +981,8 @@ def update_stock_meta(client) -> None:
         print("[股票基础信息] 无有效记录，跳过")
         return
 
-    out = pd.DataFrame(all_records)
-    cap_valid = out["total_cap"].notna().sum()
+    out = pd.concat(all_records, ignore_index=True)
+    cap_valid = out["TOTAL_CAP"].notna().sum()
     print(f"[股票基础信息] 总计 {len(out)} 条，其中 {cap_valid} 条有市值数据（close×股本）")
     path = os.path.join(FINANCIAL_DIR, "stock_meta.parquet")
     _ensure_dir(path)

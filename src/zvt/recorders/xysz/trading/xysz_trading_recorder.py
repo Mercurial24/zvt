@@ -108,14 +108,22 @@ class xyszDragonAndTigerRecorder(xyszTradingRecorder):
     def _fetch_data(self, code, start, end):
         return self.client.get_long_hu_bang(code_list=[code], is_local=False, local_path=_XYSZ_LOCAL_CACHE_PATH)
 
+    def _transform_df(self, df, entity):
+        if df is not None and not df.empty:
+            # Calculate net_in manually if not present
+            cols_upper = {c.upper(): c for c in df.columns}
+            if "BUY_AMOUNT" in cols_upper and "SELL_AMOUNT" in cols_upper:
+                df["net_in"] = df[cols_upper["BUY_AMOUNT"]] - df[cols_upper["SELL_AMOUNT"]]
+        return super()._transform_df(df, entity)
+
     def _get_column_map(self):
         return {
             "TRADE_DATE": "timestamp",
-            "REASON_TYPE": "reason",
+            "REASON_TYPE_NAME": "reason",
             "CHANGE_RANGE": "change_pct",
             "TOTAL_AMOUNT": "turnover",
             "TOTAL_VOLUME": "volume",
-            "NET_AMOUNT": "net_in", 
+            # "NET_AMOUNT": "net_in", # Calculate manually in _transform_df
         }
 
 class xyszBigDealTradingRecorder(xyszTradingRecorder):

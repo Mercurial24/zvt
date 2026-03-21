@@ -393,7 +393,7 @@ class xyszIncomeStatementRecorder(xyszFinanceRecorder):
             "TOTAL_PROFIT": "total_profits",
             "INCOME_TAX": "tax_expense",
             
-            "NET_PROFIT": "net_profit",
+            "NET_PRO_INCL_MIN_INT_INC": "net_profit",
             "NET_PRO_EXCL_MIN_INT_INC": "net_profit_as_parent",
             "MIN_INT_INC": "net_profit_as_minority_interest",
             "NET_PRO_AFTER_DED_NR_GL": "deducted_net_profit",

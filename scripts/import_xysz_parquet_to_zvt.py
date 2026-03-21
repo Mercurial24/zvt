@@ -604,16 +604,37 @@ def import_stock_meta(base_dir: str, provider: str, max_rows: Optional[int], bat
         if batch_df.empty:
             continue
         df = batch_df.copy()
+        
+        # 字段映射，保持数据湖原始名与落库模型隔离
+        rename_dict = {
+            "SECURITY_NAME": "name",
+            "LISTDATE": "list_date",
+            "DELISTDATE": "end_date",
+            "FLOAT_CAP": "float_cap",
+            "TOTAL_CAP": "total_cap",
+        }
+        df = df.rename(columns={k: v for k, v in rename_dict.items() if k in df.columns})
+
         if "entity_id" not in df.columns and "MARKET_CODE" in df.columns:
             df["entity_id"] = df["MARKET_CODE"].apply(lambda c: xysz_code_to_entity_id(c)[0])
-        if "code" not in df.columns and "entity_id" in df.columns:
+            df["exchange"] = df["MARKET_CODE"].apply(lambda c: xysz_code_to_entity_id(c)[1])
+            df["code"] = df["MARKET_CODE"].apply(lambda c: xysz_code_to_entity_id(c)[2])
+        elif "code" not in df.columns and "entity_id" in df.columns:
             df["code"] = df["entity_id"].str.replace(r"^stock_[a-z]+_", "", regex=True)
-        df["id"] = df["entity_id"]
+            df["exchange"] = df["entity_id"].apply(lambda x: x.split("_")[1] if len(str(x).split("_")) > 1 else "cn")
+            
+        if "id" not in df.columns:
+            df["id"] = df["entity_id"]
         df["entity_type"] = "stock"
         df["provider"] = provider
-        for col in ["list_date", "end_date", "timestamp"]:
+        
+        for col in ["list_date", "end_date"]:
             if col in df.columns and df[col].dtype == object:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
+                
+        if "timestamp" not in df.columns and "list_date" in df.columns:
+            df["timestamp"] = df["list_date"]
+
         out_cols = [c for c in schema_cols if c in df.columns]
         if not out_cols:
             continue
@@ -651,12 +672,21 @@ def import_industry_base_info(base_dir: str, provider: str, max_rows: Optional[i
         df["entity_type"] = "block"
         df["exchange"] = "cn"
         df["code"] = df["INDEX_CODE"].astype(str).str.strip()
-        name_col = None
-        for c in ["LEVEL1_NAME", "LEVEL2_NAME", "INDEX_NAME", "INDUSTRY_CODE"]:
-            if c in df.columns:
-                name_col = c
-                break
-        df["name"] = df[name_col].astype(str).str.strip() if name_col else df["code"]
+        
+        # 优先根据 LEVEL_TYPE 选取对应的名称
+        df["name"] = df["code"] # default
+        for level in [1, 2, 3]:
+            name_col = f"LEVEL{level}_NAME"
+            if name_col in df.columns:
+                mask = (df["LEVEL_TYPE"] == level)
+                df.loc[mask, "name"] = df.loc[mask, name_col].astype(str).str.strip()
+        
+        # 备选补齐
+        for level_col in ["LEVEL3_NAME", "LEVEL2_NAME", "LEVEL1_NAME", "INDUSTRY_CODE"]:
+            if level_col in df.columns:
+                df["name"] = df["name"].fillna(df[level_col].astype(str).str.strip())
+                df.loc[df["name"] == "", "name"] = df.loc[df["name"] == "", level_col].astype(str).str.strip()
+
         df["category"] = BlockCategory.industry.value
         df["timestamp"] = pd.Timestamp.now()
         df = df.drop_duplicates(subset=["id"], keep="last")

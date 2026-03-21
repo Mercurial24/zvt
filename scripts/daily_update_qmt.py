@@ -24,8 +24,8 @@ BASE_URL = os.environ.get("QMT_FORWARD_URL", "http://192.168.48.207:8000")
 
 # 路径配置
 QMT_BASE_DIR = "/mnt/point/stock_data/qmt_data/base_data"
-KLINE_DAILY_PATH = os.path.join(QMT_BASE_DIR, "klines_daily_dir")
-KLINE_DAILY_HFQ_PATH = os.path.join(QMT_BASE_DIR, "klines_daily_hfq_dir")
+KLINE_YEARLY_PATH = os.path.join(QMT_BASE_DIR, "klines_yearly")
+KLINE_YEARLY_HFQ_PATH = os.path.join(QMT_BASE_DIR, "klines_yearly_hfq")
 FINANCIAL_DIR = QMT_BASE_DIR
 
 KLINE_LAST_TRADING_DAYS = 15 # 稍微多同步几天，确保增量覆盖
@@ -50,46 +50,46 @@ def _get_qmt_stock_list(xt) -> list:
     bj = bj if bj else []
     return sh + bj
 
-def _save_klines_to_parquet(parts, target_path):
+def _update_yearly_kline_file(year: int, new_df: pd.DataFrame, target_path: str, label: str) -> None:
     """
-    此函数现在主要用于小规模数据的快速保存。
-    解决 hpvs_fs (errno 1) 问题：先写本地 tmp，再同步到挂载点。
+    将新的 K 线数据合并写入对应年度的 Parquet 文件。
+    - 文件内按 code 排序，保证 Row Group 统计有意义（支持跳过）
+    - 以 (code, date) 为唯一键，新数据覆盖旧数据
     """
-    if not parts:
-        return
-    import shutil
-    import tempfile
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    os.makedirs(target_path, exist_ok=True)
+    dst_path = os.path.join(target_path, f"year={year}.parquet")
+    tmp_path = dst_path + ".tmp"
+
+    if os.path.exists(dst_path):
+        try:
+            old_df = pq.read_table(dst_path).to_pandas()
+            combined = pd.concat([old_df, new_df], axis=0, ignore_index=True)
+            del old_df
+        except Exception as e:
+            print(f"  [{label}][警告] 读取旧文件失败({e})，仅保留新数据")
+            combined = new_df
+    else:
+        combined = new_df
+
+    combined = combined.drop_duplicates(subset=["code", "date"], keep="last")
     
-    out = pd.concat(parts, ignore_index=True)
-    out = out.drop_duplicates(subset=["code", "date"], keep="last")
-    out["code"] = out["code"].astype("string")
-    
-    # 在本地磁盘创建临时分区结构
-    local_temp = tempfile.mkdtemp(prefix="qmt_save_")
-    try:
-        out.to_parquet(
-            local_temp,
-            index=False,
-            partition_cols=["date"],
-            engine="pyarrow"
-        )
-        # 将本地分区结构全量同步到目标目录
-        _ensure_dir(target_path)
-        # 用 cp -r 同步子目录
-        for item in os.listdir(local_temp):
-            s = os.path.join(local_temp, item)
-            d = os.path.join(target_path, item)
-            if os.path.isdir(s):
-                if os.path.exists(d):
-                    # 如果目标分区已存在，我们只能进去复制内容 (parquet 文件名通常是唯一的)
-                    for f in os.listdir(s):
-                        shutil.copy2(os.path.join(s, f), os.path.join(d, f))
-                else:
-                    shutil.copytree(s, d)
-            else:
-                shutil.copy2(s, d)
-    finally:
-        shutil.rmtree(local_temp, ignore_errors=True)
+    # 按 code 排序是关键：使得 Parquet 行组统计(min/max code)有效
+    sort_cols = ["code"]
+    if "time" in combined.columns:
+        sort_cols.append("time")
+    elif "date" in combined.columns:
+        sort_cols.append("date")
+
+    combined = combined.sort_values(sort_cols).reset_index(drop=True)
+
+    table = pa.Table.from_pandas(combined, preserve_index=False)
+        pq.write_table(table, tmp_path, row_group_size=100_000, compression="snappy")
+    os.replace(tmp_path, dst_path)
+    print(f"  [{label}] year={year}.parquet 已更新: {len(combined)} 行")
+    del combined, table
 
 def _parse_qmt_date(s):
     """
@@ -203,64 +203,86 @@ def update_klines_daily(xt, sync_hfq=False, count=None):
             print(f"[日线] 拉取批次失败: {e}")
             raise e
 
-    # --- 使用 Polars 将中间文件合并并写入最终分区目录 ---
-    import polars as pl
-    
-    def finalize_partitioning(temp_files, target_path, name):
+    def finalize_yearly(temp_files, target_path, name):
         if not temp_files:
             return
-        import shutil
-        import tempfile
-        
-        print(f"[{name}] 开始最终分层落盘...")
+        print(f"[{name}] 开始最终年度分层落盘(Map-Reduce 流式优化)...")
         _ensure_dir(target_path)
         
-        # 本地临时落盘目录
-        local_output = tempfile.mkdtemp(prefix=f"qmt_partition_{name}_")
+        import tempfile
+        import shutil
+        import polars as pl
+        
+        # 建立按年份的中间分发站
+        local_map_dir = tempfile.mkdtemp(prefix=f"qmt_map_{name}_")
         
         try:
-            # 逐个文件处理，避免 collect() 导致内存爆炸
-            for f in tqdm(temp_files, desc=f"[{name}] 导出分区"):
-                # 读取单个批次
-                batch_df = pl.read_parquet(f)
-                if batch_df.is_empty():
-                    continue
-                # 确保列类型一致，特别是 date
-                batch_df = batch_df.with_columns(pl.col("date").cast(pl.Int64))
-                
-                # 直接分区落盘到本地目录 (每批次会在对应的 date 文件夹下产生一个独立命名的 parquet)
-                # Polars 会自动处理并发写入和目录创建
-                batch_df.write_parquet(local_output, partition_by="date")
-                
-                # 显式手动释放
-                del batch_df
-                import gc
-                gc.collect()
+            # ==== Map 阶段 ====
+            # 扫描按股票组合的临时文件，将其拆碎投入按年份命名的篮子(目录)里
+            for i, f in enumerate(tqdm(temp_files, desc=f"[{name}] 拆分重组(Map)")):
+                try:
+                    df = pl.read_parquet(f)
+                    if df.is_empty():
+                        continue
+                    # polars 直接计算并分区保存，极速且不耗内存
+                    df = df.with_columns((pl.col("date") // 10000).alias("year"))
+                    
+                    # [FIX] 修复 Polars partition_by 循环覆盖的问题：手动分流并产生唯一文件名
+                    # 注意: Polars group_by 返回 (key_tuple, group_df)，单列分组时 key 是 (val,) 而非 val
+                    for year_key, group in df.group_by("year"):
+                        year_val = year_key[0] if isinstance(year_key, tuple) else year_key
+                        year_dir = os.path.join(local_map_dir, f"year={year_val}")
+                        os.makedirs(year_dir, exist_ok=True)
+                        # 每个 Batch 使用唯一文件名 (batch_{i}.parquet)，防止相互覆盖
+                        group.write_parquet(os.path.join(year_dir, f"batch_{i}.parquet"))
+                    del df
+                except Exception as e:
+                    print(f"[{name}] Split 临时文件 {f} 失败: {e}")
 
-            # 将本地生成的目录结构同步到目标挂载点
-            print(f"[{name}] 正在将数据从本地中转站同步到挂载点...")
-            for date_dir in os.listdir(local_output):
-                s_dir = os.path.join(local_output, date_dir)
-                d_dir = os.path.join(target_path, date_dir)
-                if os.path.isdir(s_dir):
-                    os.makedirs(d_dir, exist_ok=True)
-                    for f in os.listdir(s_dir):
-                        shutil.copy2(os.path.join(s_dir, f), os.path.join(d_dir, f))
-            print(f"[{name}] 导出完成")
-        except Exception as e:
-            print(f"[{name}] 导出失败: {e}")
-            raise e
+            # ==== Reduce 阶段 ====
+            # 此时 local_map_dir/ 下已生成 year=1990/, year=1991/ 等分类目录
+            # 遍历这些年份，每一年的数据统一次性合并入库！(每年度只发一次磁盘 I/O)
+            year_dirs = [d for d in os.listdir(local_map_dir) if d.startswith("year=")]
+            years_involved = len(year_dirs)
+            
+            for y_dir in tqdm(year_dirs, desc=f"[{name}] 一次性归档(Reduce)"):
+                try:
+                    y_val = int(y_dir.replace("year=", ""))
+                    src_year_path = os.path.join(local_map_dir, y_dir)
+                    
+                    # 捞出这一个年份刚刚拆碎分拨过来的所有散文件
+                    parts = []
+                    for pf in os.listdir(src_year_path):
+                        if pf.endswith(".parquet"):
+                            parts.append(pd.read_parquet(os.path.join(src_year_path, pf)))
+                    if not parts:
+                        continue
+                    
+                    # 缝合成该年的局部全量增量 df
+                    year_df = pd.concat(parts, axis=0, ignore_index=True)
+                    if "year" in year_df.columns:
+                        year_df = year_df.drop(columns=["year"])
+                        
+                    # 仅仅开启并覆写一次最终年度文件！
+                    _update_yearly_kline_file(y_val, year_df, target_path, name)
+                    
+                    del parts, year_df
+                except Exception as e:
+                    print(f"[{name}] 归档 {y_dir} 异常: {e}")
+                    
         finally:
-            shutil.rmtree(local_output, ignore_errors=True)
+            shutil.rmtree(local_map_dir, ignore_errors=True)
+            
+        print(f"[{name}] 导出完成，共涉及 {years_involved} 个年份")
 
-    finalize_partitioning(bfq_temp_files, KLINE_DAILY_PATH, "BFQ")
-    finalize_partitioning(hfq_temp_files, KLINE_DAILY_HFQ_PATH, "HFQ")
+    finalize_yearly(bfq_temp_files, KLINE_YEARLY_PATH, "BFQ(不复权)")
+    finalize_yearly(hfq_temp_files, KLINE_YEARLY_HFQ_PATH, "HFQ(后复权)")
 
     # 清理临时文件
     import shutil
     shutil.rmtree(temp_dir, ignore_errors=True)
     
-    print(f"[日线] 同步完成。已全部落盘至分区目录。")
+    print(f"[日线] 同步完成。已全部落盘至年度 Parquet 文件。")
 
 def _release_memory() -> None:
     """强制回收内存并归还给 OS（解决 Python 不释放 RSS 的问题）。"""

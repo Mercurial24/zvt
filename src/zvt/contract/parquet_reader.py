@@ -78,9 +78,14 @@ class ParquetReader:
         target_path = None
         # 特例映射：
         if table_name == "stock_1d_kdata":
-            target_path = os.path.join(parquet_base, "klines_daily_dir")
+            # 优先使用新的年度格式目录，不存在时回退到旧的日期分区目录
+            yearly_path = os.path.join(parquet_base, "klines_yearly")
+            daily_path  = os.path.join(parquet_base, "klines_daily_dir")
+            target_path = yearly_path if os.path.isdir(yearly_path) else daily_path
         elif table_name == "stock_1d_hfq_kdata":
-            target_path = os.path.join(parquet_base, "klines_daily_hfq_dir")
+            yearly_path = os.path.join(parquet_base, "klines_yearly_hfq")
+            daily_path  = os.path.join(parquet_base, "klines_daily_hfq_dir")
+            target_path = yearly_path if os.path.isdir(yearly_path) else daily_path
         else:
             # 默认映射规则，例如 xysz_balance_sheet -> balance_sheet.parquet
             # 移除 schema 表名前缀，如 xysz_, qmt_ 等
@@ -100,19 +105,84 @@ class ParquetReader:
             return None if return_type == "df" else []
 
         try:
-            # 兼容处理单文件 vs 分区目录
-            # 使用 pyarrow.dataset 能够更鲁棒地处理 Hive 分区（如 date=20240101）
             if os.path.isdir(target_path):
-                import pyarrow.dataset as ds
-                # 自动识别分区结构
-                dataset = ds.dataset(target_path, format="parquet", partitioning="hive")
-                lazy_df = pl.scan_pyarrow_dataset(dataset)
+                entries = os.listdir(target_path)
+                if not entries:
+                    logger.warning(f"Empty directory: {target_path}")
+                    return None if return_type == "df" else []
+
+                first = sorted(entries)[0]
+
+                # ----------------------------------------------------------
+                # 年度文件格式：year=YYYY.parquet（新格式，推荐）
+                # 只加载日期范围命中的年份文件，文件数极少（~13 个），
+                # 文件内按 code 排序，Polars 谓词下推能跳过无关行组。
+                # ----------------------------------------------------------
+                if first.startswith("year="):
+                    year_start = to_pd_timestamp(start_timestamp).year if start_timestamp else 1990
+                    year_end   = to_pd_timestamp(end_timestamp).year   if end_timestamp   else 9999
+                    selected_files = []
+                    for e in entries:
+                        if not e.startswith("year=") or not e.endswith(".parquet"):
+                            continue
+                        try:
+                            y = int(e[5:-8])  # "year=2024.parquet" -> 2024
+                        except ValueError:
+                            continue
+                        if year_start <= y <= year_end:
+                            selected_files.append(os.path.join(target_path, e))
+
+                    if not selected_files:
+                        logger.warning(f"No yearly files match years [{year_start}, {year_end}] in {target_path}")
+                        return None if return_type == "df" else []
+
+                    selected_files.sort()
+                    logger.debug(f"Yearly pruning: {len(selected_files)}/{len(entries)} files selected")
+                    # 年度文件内 kline_time 存的是 μs，但 Polars 多文件合并 schema
+                    # 时有时推断成 ns，导致精度冲突。按 Polars 提示传入 cast_options。
+                    try:
+                        lazy_df = pl.scan_parquet(
+                            selected_files,
+                            cast_options=pl.ScanCastOptions(datetime_cast="nanosecond-downcast"),
+                        )
+                    except TypeError:
+                        # 旧版本 Polars 不支持 cast_options，直接扫描
+                        lazy_df = pl.scan_parquet(selected_files)
+
+                # ----------------------------------------------------------
+                # 旧日期分区格式：date=YYYYMMDD/（兼容保留）
+                # 先通过 os.listdir 过滤分区目录，减少 PyArrow 遍历次数。
+                # ----------------------------------------------------------
+                elif first.startswith("date="):
+                    import pyarrow.dataset as ds
+                    date_start_int = int(to_pd_timestamp(start_timestamp).strftime('%Y%m%d')) if start_timestamp else 0
+                    date_end_int   = int(to_pd_timestamp(end_timestamp).strftime('%Y%m%d'))   if end_timestamp   else 99999999
+                    subdirs = []
+                    for e in entries:
+                        try:
+                            d = int(e.split("=", 1)[1])
+                        except (ValueError, IndexError):
+                            continue
+                        if date_start_int <= d <= date_end_int:
+                            subdirs.append(os.path.join(target_path, e))
+                    if not subdirs:
+                        logger.warning(f"No date partitions match [{date_start_int}, {date_end_int}]")
+                        return None if return_type == "df" else []
+                    logger.debug(f"Date partition pruning: {len(subdirs)}/{len(entries)} selected")
+                    dataset = ds.dataset(subdirs, format="parquet", partitioning="hive")
+                    lazy_df = pl.scan_pyarrow_dataset(dataset)
+
+                else:
+                    # 未知分区类型，全量扫描
+                    import pyarrow.dataset as ds
+                    dataset = ds.dataset(target_path, format="parquet", partitioning="hive")
+                    lazy_df = pl.scan_pyarrow_dataset(dataset)
             else:
-                 lazy_df = pl.scan_parquet(target_path)
+                lazy_df = pl.scan_parquet(target_path)
 
         except Exception as e:
-             logger.error(f"Error scanning parquet {target_path}: {e}")
-             return None if return_type == "df" else []
+            logger.error(f"Error scanning parquet {target_path}: {e}")
+            return None if return_type == "df" else []
 
         # 获取 Schema 实际存在的列，做交集防止选取不存在的列爆错
         available_cols = lazy_df.collect_schema().names()
@@ -134,9 +204,14 @@ class ParquetReader:
             for mc in mandatory_cols:
                  if mc in available_cols and mc not in select_cols:
                      select_cols.append(mc)
-                     
             final_select_cols = [c for c in select_cols if c in available_cols]
-            lazy_df = lazy_df.select(final_select_cols)
+            
+            # 为了后面归一化 logic (合成 timestamp)，必须确保 date 或 kline_time 被保留
+            for extra in ["date", "kline_time"]:
+                if extra in available_cols and extra not in final_select_cols:
+                    final_select_cols.append(extra)
+        else:
+            final_select_cols = None
 
         # -----------------------------
         # 谓词下推 (Predicate Pushdown)
@@ -213,6 +288,9 @@ class ParquetReader:
         # Collect 数据
         # -----------------------------
         try:
+            if final_select_cols:
+                lazy_df = lazy_df.select(final_select_cols)
+
             if limit is not None:
                 lazy_df = lazy_df.limit(limit)
             

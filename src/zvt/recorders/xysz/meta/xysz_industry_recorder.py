@@ -87,13 +87,20 @@ class xyszIndustryBlockRecorder(Recorder):
     def _parse_industry_row(self, row, code):
         """从一行行业数据中提取 Block 记录"""
         try:
-            # 优先使用 LEVEL1_NAME 作为行业名称
+            # 优先根据 LEVEL_TYPE 选取对应的名称
+            level_type = row.get("LEVEL_TYPE") if isinstance(row, (dict, pd.Series)) else getattr(row, "LEVEL_TYPE", None)
             name = None
-            for field in ["LEVEL1_NAME", "LEVEL2_NAME", "INDEX_NAME", "INDUSTRY_CODE"]:
-                val = row.get(field) if isinstance(row, (dict, pd.Series)) else getattr(row, field, None)
-                if val and str(val).strip():
-                    name = str(val).strip()
-                    break
+            if level_type:
+                field = f"LEVEL{level_type}_NAME"
+                name = row.get(field) if isinstance(row, (dict, pd.Series)) else getattr(row, field, None)
+            
+            if not name or not str(name).strip():
+                # 备选列表，按从细到粗尝试 (LEVEL3 -> LEVEL2 -> LEVEL1 -> INDUSTRY_CODE)
+                for field in ["LEVEL3_NAME", "LEVEL2_NAME", "LEVEL1_NAME", "INDUSTRY_CODE"]:
+                    val = row.get(field) if isinstance(row, (dict, pd.Series)) else getattr(row, field, None)
+                    if val and str(val).strip():
+                        name = str(val).strip()
+                        break
 
             if not name:
                 name = str(code)

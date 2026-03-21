@@ -328,7 +328,8 @@ def get_data(
     if storage_type is None:
         table_name = data_schema.__tablename__.lower()
         # 自动路由规则：海量时序数据 (K线、Tick) 以及 预计算出来的因子库 默认走 Parquet
-        if any(kw in table_name for kw in ["kdata", "tick", "factor"]):
+        # 注意：指数 (Index) 类数据量较小，强制走 SQLite 以保持管理方便
+        if any(kw in table_name for kw in ["kdata", "tick", "factor"]) and "index" not in table_name:
             storage_type = "parquet"
         else:
             storage_type = "sqlite"

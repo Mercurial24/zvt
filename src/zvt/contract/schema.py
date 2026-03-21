@@ -29,7 +29,7 @@ class Mixin(object):
     # ts = Column(BIGINT)
     
     # zvt storage engine router marker (sqlite vs parquet)
-    storage_type: str = "sqlite"
+    storage_type: str = None
 
     @classmethod
     def help(cls):

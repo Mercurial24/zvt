@@ -17,7 +17,8 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
     provider = "qmt"
     # class level kdata schema should always use common
     data_schema = IndexKdataCommon
-    entity_provider = "em"
+    # base class expects entity_provider to be not None
+    entity_provider = "qmt"
     entity_schema = Index
     download_history_data = False
 
@@ -47,6 +48,7 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
         self.entity_type = "index"
         self.download_history_data = download_history_data
 
+        # 确定具体存储表 (e.g., Index1dKdata)
         self.data_schema = get_kdata_schema(entity_type=self.entity_type, level=level, adjust_type=None)
 
         super().__init__(
@@ -71,6 +73,40 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
         )
         self.one_day_trading_minutes = 240
 
+    def init_entities(self):
+        # 彻底覆盖 init_entities，只使用 codes 构造临时 entity
+        if not self.codes:
+            self.logger.warning("No codes provided for QmtIndexRecorder, please set codes.")
+            self.entities = []
+            return
+
+        from zvt.domain import Index
+        self.entities = []
+        for full_code in self.codes:
+            # 兼容 000300.SH 和 000300
+            try:
+                if "." in full_code:
+                    code, exchange = full_code.split(".")
+                    exchange = exchange.lower()
+                else:
+                    code = full_code
+                    # 猜测 exchange (通常 6 开头为 sh, 0/3 为 sz)
+                    exchange = "sh" if code.startswith("6") or code.startswith("000") else "sz"
+                
+                # 手动拼出符合 ZVT 规范的 entity_id
+                e_id = f"index_{exchange}_{code}"
+                self.entities.append(
+                    Index(
+                        id=e_id,
+                        code=code,
+                        exchange=exchange,
+                        name=full_code,
+                    )
+                )
+            except Exception as e:
+                self.logger.error(f"failed to parse code {full_code}, error: {e}")
+        self.logger.info(f"Initialized {len(self.entities)} entities from hardcoded codes.")
+
     def record(self, entity, start, end, size, timestamps):
         if start and (self.level == IntervalLevel.LEVEL_1DAY):
             start = start.date()
@@ -93,8 +129,18 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
         )
         time_str_fmt = TIME_FORMAT_DAY if self.level == IntervalLevel.LEVEL_1DAY else TIME_FORMAT_MINUTE
         if pd_is_not_null(df):
+            df = df.reset_index(drop=True)
+
+            # get_market_data_ex 的时间在 'time' 列中，单位为毫秒
+            if "time" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["time"], unit="ms")
+            elif "kline_time" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["kline_time"])
+            else:
+                self.logger.error(f"no time column found in kdata for {entity.id}, columns: {df.columns.tolist()}")
+                return
+
             df["entity_id"] = entity.id
-            df["timestamp"] = pd.to_datetime(df.index)
             df["id"] = df.apply(
                 lambda row: f"{row['entity_id']}_{to_date_time_str(row['timestamp'], fmt=time_str_fmt)}", axis=1
             )
@@ -103,8 +149,10 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
             df["code"] = entity.code
             df["name"] = entity.name
             df.rename(columns={"amount": "turnover"}, inplace=True)
-            df["change_pct"] = (df["close"] - df["preClose"]) / df["preClose"]
+            if "preClose" in df.columns:
+                df["change_pct"] = (df["close"] - df["preClose"]) / df["preClose"]
             df_to_db(df=df, data_schema=self.data_schema, provider=self.provider, force_update=self.force_update)
+            self.logger.info(f"Saved {len(df)} records for {entity.id}")
 
         else:
             self.logger.info(f"no kdata for {entity.id}")
@@ -135,7 +183,7 @@ class QmtIndexRecorder(FixedCycleDataRecorder):
 
         start_timestamp, end_timestamp, size, timestamps = super().evaluate_start_end_size_timestamps(entity)
         # start_timestamp is the last updated timestamp
-        if self.end_timestamp is not None:
+        if self.end_timestamp is not None and start_timestamp is not None:
             if start_timestamp >= self.end_timestamp:
                 return start_timestamp, end_timestamp, 0, None
             else:
@@ -177,7 +225,7 @@ if __name__ == "__main__":
     end_timestamp = pd.Timestamp("2024-12-03")
     QmtIndexRecorder(
         codes=IMPORTANT_INDEX,
-        level=IntervalLevel.LEVEL_1MIN,
+        level=IntervalLevel.LEVEL_1DAY,
         sleeping_time=0,
         start_timestamp=start_timestamp,
         end_timestamp=end_timestamp,
