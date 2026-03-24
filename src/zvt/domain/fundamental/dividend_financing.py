@@ -42,6 +42,11 @@ class DividendDetail(DividendFinancingBase, Mixin):
     #: 除权除息日
     dividend_date = Column(DateTime)
 
+    #: 每股派息(税前, 元)
+    cash_tax_free = Column(Float)
+    #: 每股派息(税后, 元)
+    cash_tax_bearing = Column(Float)
+
     #: 方案
     dividend = Column(String(length=128))
 

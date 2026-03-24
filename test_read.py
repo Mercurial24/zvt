@@ -4,8 +4,17 @@ import sys
 # 确保能找到 src 目录
 sys.path.insert(0, "/data/code/zvt/src")
 
-from zvt.domain import Stock1dKdata, Stock1dHfqKdata, HolderNum
+from zvt.domain import Stock1dKdata, Stock1dHfqKdata, HolderNum, StockValuation
 from zvt.contract.api import get_data
+
+
+def _xysz_entity_id_from_market_code(market_code: str) -> str:
+    """例如 000793.SZ -> stock_sz_000793"""
+    parts = market_code.upper().strip().split(".")
+    if len(parts) != 2:
+        raise ValueError(f"需要 代码.交易所 格式，例如 000793.SZ，当前: {market_code!r}")
+    num, ex = parts
+    return f"stock_{ex.lower()}_{num}"
 
 if __name__ == "__main__":
     code = "000793.SZ"
@@ -73,3 +82,46 @@ if __name__ == "__main__":
         print(df_holder_sqlite[['code', 'report_period', 'report_date', 'holder_num']].tail(5))
     else:
         print("\n❌ 未能从 SQLite 读取到股东人数数据。")
+
+    # 5. 测试读取 xysz 估值表中的股息率（SQLite: xysz_valuation.db）
+    try:
+        entity_id_xysz = _xysz_entity_id_from_market_code(code)
+    except ValueError as e:
+        entity_id_xysz = None
+        print(f"\n⚠️ 无法解析 xysz entity_id: {e}")
+
+    if entity_id_xysz:
+        df_val = get_data(
+            data_schema=StockValuation,
+            entity_id=entity_id_xysz,
+            provider="xysz",
+            start_timestamp=start_ts,
+            columns=[
+                "timestamp",
+                "code",
+                "dividend_ps_ttm",
+                "dividend_yield_ttm",
+                "pe_ttm",
+                "pb",
+            ],
+        )
+        if df_val is not None and not df_val.empty:
+            show_cols = [
+                c
+                for c in [
+                    "timestamp",
+                    "code",
+                    "dividend_ps_ttm",
+                    "dividend_yield_ttm",
+                    "pe_ttm",
+                    "pb",
+                ]
+                if c in df_val.columns
+            ]
+            print(f"\n✅ 成功从 SQLite 读取 xysz 估值（含股息率），记录数: {len(df_val)}")
+            print(df_val[show_cols].tail(8))
+        else:
+            print(
+                "\n❌ 未能读取 xysz StockValuation（含 dividend_yield_ttm）。"
+                "请先运行 scripts/run_xysz_dividend_backfill_once.sh 或 zvt_daily_job 中相关步骤。"
+            )

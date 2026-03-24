@@ -33,6 +33,10 @@ class StockValuation(ValuationBase, Mixin):
     ps = Column(Float)
     #: 市现率
     pcf = Column(Float)
+    #: 近12个月每股现金分红(税前, 元)
+    dividend_ps_ttm = Column(Float)
+    #: 近12个月股息率(税前)
+    dividend_yield_ttm = Column(Float)
 
 
 class EtfValuation(ValuationBase, Mixin):

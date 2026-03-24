@@ -4,6 +4,7 @@ from zvt.contract.api import df_to_db
 from zvt.recorders.xysz.xysz_api import get_xysz_client
 from zvt.domain import Stock, DividendDetail, RightsIssueDetail, SpoDetail
 import pandas as pd
+import hashlib
 import logging
 from zvt import zvt_env
 import os
@@ -101,13 +102,44 @@ class xyszDividendDetailRecorder(xyszDividendFinancingRecorder):
         if "ANN_DATE" in df.columns:
             df["announce_date"] = df["ANN_DATE"]
             df["timestamp"] = df["ANN_DATE"]
-        return super()._transform_df(df, entity)
+        df = super()._transform_df(df, entity)
+        if df is None or df.empty or "entity_id" not in df.columns or "timestamp" not in df.columns:
+            return df
+
+        ts_key = pd.to_datetime(df["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("1970-01-01")
+        id_key_date = ts_key.copy()
+        if "dividend_date" in df.columns:
+            div_key = pd.to_datetime(df["dividend_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            id_key_date = div_key.fillna(id_key_date)
+        if "record_date" in df.columns:
+            rec_key = pd.to_datetime(df["record_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            id_key_date = id_key_date.fillna(rec_key)
+        id_key_date = id_key_date.fillna(ts_key)
+        df["id"] = df["entity_id"] + "_" + ts_key + "_" + id_key_date
+
+        dup_mask = df["id"].duplicated(keep=False)
+        if dup_mask.any():
+            hash_fields = [c for c in ["cash_tax_free", "cash_tax_bearing", "dividend", "announce_date", "record_date", "dividend_date"] if c in df.columns]
+            if not hash_fields:
+                hash_fields = ["id"]
+
+            def _digest_row(row):
+                payload = "|".join("" if pd.isna(row.get(c)) else str(row.get(c)) for c in hash_fields)
+                return hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
+
+            df.loc[dup_mask, "id"] = df.loc[dup_mask].apply(
+                lambda r: f"{r['id']}_{_digest_row(r)}",
+                axis=1,
+            )
+        return df
 
     def _get_column_map(self):
         # Doc: MARKET_CODE, DIV_PROGRESS, DVD_PER_SHARE_STK, DATE_EQY_RECORD, DATE_EX, DATE_DVD_PAYOUT
         return {
             "DATE_EQY_RECORD": "record_date", # 股权登记日
             "DATE_EX": "dividend_date", # 除权除息日
+            "DVD_PER_SHARE_PRE_TAX_CASH": "cash_tax_free",
+            "DVD_PER_SHARE_AFTER_TAX_CASH": "cash_tax_bearing",
             "DVD_PER_SHARE_STK": "dividend", 
         }
 

@@ -13,6 +13,7 @@ from zvt.domain import (
     Stock1dKdata,
     BalanceSheet,
     CashFlowStatement,
+    DividendDetail,
 )
 from zvt.contract.api import df_to_db, get_data
 import logging
@@ -74,11 +75,21 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         if cashflow_df is None or cashflow_df.empty:
             cashflow_df = pd.DataFrame(columns=["timestamp", "report_period", "net_op_cash_flows"])
 
+        # 5. 分红明细（用于计算股息率）
+        dividend_df = DividendDetail.query_data(
+            entity_id=entity_id,
+            provider="xysz",
+            columns=["timestamp", "dividend_date", "cash_tax_free"],
+        )
+        if dividend_df is None or dividend_df.empty:
+            dividend_df = pd.DataFrame(columns=["timestamp", "dividend_date", "cash_tax_free"])
+
         # --- 预处理与合并 ---
         kdata_df = kdata_df.copy()
         income_df = income_df.copy()
         balance_df = balance_df.copy()
         cashflow_df = cashflow_df.copy()
+        dividend_df = dividend_df.copy()
 
         # 增加逻辑：只计算今天之前的估值，防止计算不完整的盘中数据
         today = pd.Timestamp.now().normalize()
@@ -179,6 +190,39 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         # 5. PCF (TTM)
         df_merged["pcf"] = np.round(df_merged["market_cap"] / df_merged["ttm_net_op_cash_flows"], 2)
 
+        # 6. 股息率（税前口径）：近12个月每股现金分红 / 当日收盘价
+        df_merged["dividend_ps_ttm"] = np.nan
+        df_merged["dividend_yield_ttm"] = np.nan
+        if not dividend_df.empty:
+            if "dividend_date" in dividend_df.columns:
+                event_date = pd.to_datetime(dividend_df["dividend_date"], errors="coerce")
+            else:
+                event_date = pd.Series(pd.NaT, index=dividend_df.index)
+
+            fallback_ts = pd.to_datetime(dividend_df.get("timestamp"), errors="coerce")
+            event_date = event_date.fillna(fallback_ts).dt.normalize()
+            cash_series = pd.to_numeric(dividend_df.get("cash_tax_free"), errors="coerce").fillna(0.0)
+
+            valid_mask = event_date.notna() & cash_series.notna()
+            if valid_mask.any():
+                dividend_events = pd.DataFrame({"event_date": event_date[valid_mask], "cash_ps": cash_series[valid_mask]})
+                # 同一天可能有多条方案，先聚合成日度现金分红
+                daily_cash = dividend_events.groupby("event_date")["cash_ps"].sum().sort_index()
+                trade_days = pd.DatetimeIndex(
+                    pd.to_datetime(df_merged["ts_merge"]).dt.normalize().sort_values().unique()
+                )
+                if len(trade_days) > 0:
+                    aligned_daily_cash = daily_cash.reindex(trade_days, fill_value=0.0)
+                    ttm_cash = aligned_daily_cash.rolling("365D", min_periods=1).sum()
+                    ts_key = pd.to_datetime(df_merged["ts_merge"]).dt.normalize()
+                    df_merged["dividend_ps_ttm"] = ts_key.map(ttm_cash)
+                    close_numeric = pd.to_numeric(df_merged["close"], errors="coerce")
+                    df_merged["dividend_yield_ttm"] = np.where(
+                        close_numeric > 0,
+                        df_merged["dividend_ps_ttm"] / close_numeric,
+                        np.nan,
+                    )
+
         # 流通股本 / 流通市值：Stock 实体的 float_cap 存的是流通市值（更新时点），反推流通股本 = 流通市值/最新价，再算各日流通市值
         latest_close = float(close[-1]) if len(close) else np.nan
         entity_circ_mv = getattr(entity, "float_cap", None)
@@ -218,6 +262,8 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
                 "pb": row["pb"] if pd.notna(row.get("pb")) else None,
                 "ps": row["ps"] if pd.notna(row.get("ps")) else None,
                 "pcf": row["pcf"] if pd.notna(row.get("pcf")) else None,
+                "dividend_ps_ttm": row["dividend_ps_ttm"] if pd.notna(row.get("dividend_ps_ttm")) else None,
+                "dividend_yield_ttm": row["dividend_yield_ttm"] if pd.notna(row.get("dividend_yield_ttm")) else None,
                 "circulating_cap": row["circulating_cap"] if pd.notna(row.get("circulating_cap")) else None,
                 "circulating_market_cap": row["circulating_market_cap"] if pd.notna(row.get("circulating_market_cap")) else None,
                 "turnover_ratio": row["turnover_ratio"] if pd.notna(row.get("turnover_ratio")) else None,

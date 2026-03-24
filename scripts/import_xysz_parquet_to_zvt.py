@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import logging
 import os
 import sys
@@ -535,15 +536,46 @@ def import_dividend(base_dir: str, provider: str, max_rows: Optional[int], batch
             df["record_date"] = pd.to_datetime(df["record_date"], errors="coerce")
         if "dividend_date" in df.columns:
             df["dividend_date"] = pd.to_datetime(df["dividend_date"], errors="coerce")
+        if "cash_tax_free" in df.columns:
+            df["cash_tax_free"] = pd.to_numeric(df["cash_tax_free"], errors="coerce")
+        if "cash_tax_bearing" in df.columns:
+            df["cash_tax_bearing"] = pd.to_numeric(df["cash_tax_bearing"], errors="coerce")
         if "id" not in df.columns and "entity_id" in df.columns and "timestamp" in df.columns:
-            df["id"] = df["entity_id"] + "_" + df["timestamp"].dt.strftime("%Y-%m-%d")
+            ts_key = pd.to_datetime(df["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("1970-01-01")
+            id_key_date = ts_key.copy()
             if "dividend_date" in df.columns:
-                d = df["dividend_date"].fillna(pd.Timestamp("1970-01-01")).dt.strftime("%Y-%m-%d")
-                df["id"] = df["id"] + "_" + d
+                div_key = pd.to_datetime(df["dividend_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                id_key_date = div_key.fillna(id_key_date)
+            if "record_date" in df.columns:
+                rec_key = pd.to_datetime(df["record_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                id_key_date = id_key_date.fillna(rec_key)
+            id_key_date = id_key_date.fillna(ts_key)
+            df["id"] = df["entity_id"] + "_" + ts_key + "_" + id_key_date
+
+            # 若同一 entity_id+日期仍多条（常见于缺少除息日），追加业务特征哈希，避免批内碰撞
+            dup_mask = df["id"].duplicated(keep=False)
+            if dup_mask.any():
+                hash_fields = []
+                for c in ["cash_tax_free", "cash_tax_bearing", "dividend", "announce_date", "record_date", "dividend_date"]:
+                    if c in df.columns:
+                        hash_fields.append(c)
+                if not hash_fields:
+                    hash_fields = ["id"]
+
+                def _digest_row(row):
+                    payload = "|".join("" if pd.isna(row.get(c)) else str(row.get(c)) for c in hash_fields)
+                    return hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
+
+                df.loc[dup_mask, "id"] = df.loc[dup_mask].apply(
+                    lambda r: f"{r['id']}_{_digest_row(r)}",
+                    axis=1,
+                )
         out_cols = [c for c in schema_cols if c in df.columns]
         if out_cols:
             attempted = len(df)
-            saved = df_to_db(df=df[out_cols], data_schema=DividendDetail, provider=provider, force_update=False)
+            # DividendDetail 需要支持历史回填（例如新增现金分红字段），
+            # 因此同 id 记录也应更新，不能只做 insert。
+            saved = df_to_db(df=df[out_cols], data_schema=DividendDetail, provider=provider, force_update=True)
             total += saved
             logger.info("dividend 本批尝试 %d 行，实际写入 %d 行，累计写入 %d", attempted, saved, total)
         del df, batch_df
