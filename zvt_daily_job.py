@@ -25,6 +25,10 @@ from zvt.recorders.qmt.finance.qmt_finance_recorder import (
     QmtCashFlowRecorder,
     QmtIncomeStatementRecorder,
     QmtValuationRecorder,
+    QmtFinanceFactorRecorder,
+    QmtHolderNumRecorder,
+    QmtTopTenHolderRecorder,
+    QmtTopTenTradableHolderRecorder,
 )
 from zvt.recorders.qmt.index.qmt_index_recorder import QmtIndexRecorder
 from zvt.recorders.qmt.meta.qmt_stock_meta_recorder import QMTStockRecorder
@@ -245,12 +249,16 @@ def run_daily_job():
     _cleanup_amazingdata_sdk()
 
     qmt_tasks = [
-        # ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
-        # ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
-        # ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
-        # ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
-        # ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
+        ("QMT 股票列表", lambda: QMTStockRecorder(sleeping_time=0)),
+        ("QMT 指数日线", lambda: QmtIndexRecorder(codes=IMPORTANT_INDEX, level='1d', sleeping_time=0)),
+        ("QMT 资产负债表", lambda: QmtBalanceSheetRecorder(sleeping_time=0.1)),
+        ("QMT 利润表", lambda: QmtIncomeStatementRecorder(sleeping_time=0.1)),
+        ("QMT 现金流量表", lambda: QmtCashFlowRecorder(sleeping_time=0.1)),
+        ("QMT 财务指标", lambda: QmtFinanceFactorRecorder(sleeping_time=0.1)),
         ("QMT 估值", lambda: QmtValuationRecorder(sleeping_time=0)),
+        ("QMT 股东人数", lambda: QmtHolderNumRecorder(sleeping_time=0.1)),
+        ("QMT 十大股东", lambda: QmtTopTenHolderRecorder(sleeping_time=0.1)),
+        ("QMT 十大流通股东", lambda: QmtTopTenTradableHolderRecorder(sleeping_time=0.1)),
     ]
     for name, factory in qmt_tasks:
         success_count, fail_count = _run_recorder_task(name, factory, summary, success_count, fail_count)

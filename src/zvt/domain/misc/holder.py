@@ -110,7 +110,7 @@ class HolderNum(HolderBase, Mixin):
     total_holder_num = Column(Float)
 
 
-register_schema(providers=["eastmoney", "joinquant", "xysz"], db_name="holder", schema_base=HolderBase, entity_type="stock")
+register_schema(providers=["eastmoney", "joinquant", "xysz", "qmt"], db_name="holder", schema_base=HolderBase, entity_type="stock")
 
 
 # the __all__ is generated

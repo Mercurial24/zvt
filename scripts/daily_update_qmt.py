@@ -86,7 +86,7 @@ def _update_yearly_kline_file(year: int, new_df: pd.DataFrame, target_path: str,
     combined = combined.sort_values(sort_cols).reset_index(drop=True)
 
     table = pa.Table.from_pandas(combined, preserve_index=False)
-        pq.write_table(table, tmp_path, row_group_size=100_000, compression="snappy")
+    pq.write_table(table, tmp_path, row_group_size=100_000, compression="snappy")
     os.replace(tmp_path, dst_path)
     print(f"  [{label}] year={year}.parquet 已更新: {len(combined)} 行")
     del combined, table
@@ -219,22 +219,18 @@ def update_klines_daily(xt, sync_hfq=False, count=None):
         try:
             # ==== Map 阶段 ====
             # 扫描按股票组合的临时文件，将其拆碎投入按年份命名的篮子(目录)里
-            for i, f in enumerate(tqdm(temp_files, desc=f"[{name}] 拆分重组(Map)")):
+            for f in tqdm(temp_files, desc=f"[{name}] 拆分重组(Map)"):
                 try:
-                    df = pl.read_parquet(f)
-                    if df.is_empty():
+                    file_name = os.path.basename(f)
+                    df = pd.read_parquet(f)
+                    if df.empty:
                         continue
-                    # polars 直接计算并分区保存，极速且不耗内存
-                    df = df.with_columns((pl.col("date") // 10000).alias("year"))
-                    
-                    # [FIX] 修复 Polars partition_by 循环覆盖的问题：手动分流并产生唯一文件名
-                    # 注意: Polars group_by 返回 (key_tuple, group_df)，单列分组时 key 是 (val,) 而非 val
-                    for year_key, group in df.group_by("year"):
-                        year_val = year_key[0] if isinstance(year_key, tuple) else year_key
-                        year_dir = os.path.join(local_map_dir, f"year={year_val}")
-                        os.makedirs(year_dir, exist_ok=True)
-                        # 每个 Batch 使用唯一文件名 (batch_{i}.parquet)，防止相互覆盖
-                        group.write_parquet(os.path.join(year_dir, f"batch_{i}.parquet"))
+                    # 按年切片保存，并保留原批次文件名，避免旧的 Polars 分区写同名文件覆盖导致大规模漏数
+                    df["year"] = df["date"] // 10000
+                    for y, sub_df in df.groupby("year"):
+                        y_dir = os.path.join(local_map_dir, f"year={y}")
+                        os.makedirs(y_dir, exist_ok=True)
+                        sub_df.to_parquet(os.path.join(y_dir, file_name), index=False, engine="pyarrow")
                     del df
                 except Exception as e:
                     print(f"[{name}] Split 临时文件 {f} 失败: {e}")
@@ -359,7 +355,7 @@ def _sync_financial_table(xt, table_name: str, file_name: str, all_codes: list):
             dedup_keys = ["code"]
             if "m_anntime" in current_batch_df.columns:
                 dedup_keys.append("m_anntime")
-            elif "m_timemark" in current_batch_df.columns:
+            if "m_timemark" in current_batch_df.columns:
                 dedup_keys.append("m_timemark")
             current_batch_df = current_batch_df.drop_duplicates(subset=dedup_keys, keep="last")
             tmp_path = os.path.join(temp_dir, f"batch_{i}.parquet")
@@ -389,23 +385,31 @@ def _sync_financial_table(xt, table_name: str, file_name: str, all_codes: list):
         base_schema = None
         tmp_final = os.path.join(temp_dir, f"{table_name}_final.parquet")
         try:
+            schemas = [pq.read_schema(tf) for tf in valid_files]
+            base_schema = pa.unify_schemas(schemas)
+            writer = pq.ParquetWriter(tmp_final, base_schema)
+
             for tf in valid_files:
                 table = pq.read_table(tf)
-                if writer is None:
-                    base_schema = table.schema
-                    writer = pq.ParquetWriter(tmp_final, base_schema)
-                    writer.write_table(table)
-                    continue
-
-                # schema 对齐：缺失列补 null，按首文件列顺序输出
+                
                 aligned_cols = []
                 for field in base_schema:
                     if field.name in table.column_names:
-                        aligned_cols.append(table[field.name])
+                        col = table[field.name]
+                        if col.type != field.type:
+                            try:
+                                col = col.cast(field.type, safe=False)
+                            except Exception:
+                                pass
+                        aligned_cols.append(col)
                     else:
                         aligned_cols.append(pa.nulls(table.num_rows, type=field.type))
                 aligned = pa.Table.from_arrays(aligned_cols, schema=base_schema)
                 writer.write_table(aligned)
+
+            if writer is not None:
+                writer.close()
+                writer = None
 
             import shutil
             shutil.move(tmp_final, path)
@@ -428,11 +432,13 @@ def update_financial(xt):
     _sync_financial_table(xt, "Balance", "balance_sheet.parquet", all_codes)
     _sync_financial_table(xt, "CashFlow", "cash_flow.parquet", all_codes)
     _sync_financial_table(xt, "Income", "income.parquet", all_codes)
+    _sync_financial_table(xt, "Pershareindex", "per_share_index.parquet", all_codes)
 
 def update_equity(xt):
     all_codes = _get_qmt_stock_list(xt)
     if not all_codes: return
     _sync_financial_table(xt, "Top10holder", "share_holder.parquet", all_codes)
+    _sync_financial_table(xt, "Top10flowholder", "top_ten_tradable_holder.parquet", all_codes)
     _sync_financial_table(xt, "Holdernum", "holder_num.parquet", all_codes)
     _sync_financial_table(xt, "Capital", "equity_structure.parquet", all_codes)
     _sync_financial_table(xt, "Dividend", "dividend.parquet", all_codes)
@@ -462,7 +468,6 @@ def main():
                         help=f"同步日线的交易日数目 (默认 {KLINE_LAST_TRADING_DAYS})")
     parser.add_argument("--all", action="store_true", help="同步所有历史日线 (约从1990年开始)")
     args = parser.parse_args()
-
     do_all = not (args.klines or args.financial or args.equity)
     if do_all:
         sync_count = 10000 if args.all else args.count

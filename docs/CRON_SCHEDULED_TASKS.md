@@ -16,17 +16,17 @@
 通过 `crontab -l` 可查看：
 
 ```
-# ZVT 每日数据更新：周一到周五 16:30
-30 16 * * 1-5 /root/miniconda3/envs/quant/bin/python -u /data/code/zvt/zvt_daily_job.py >> /data/code/zvt/logs/daily_job.log 2>&1
+# ZVT 每日数据更新：周一到周五 18:00
+0 18 * * 1-5 /root/miniconda3/envs/quant/bin/python -u /data/code/zvt/zvt_daily_job.py >> /data/code/zvt/logs/daily_job.log 2>&1
 
-# 格雷厄姆指数：每周五 17:00
-0 17 * * 5 cd /data/code/my_quant_begin && /root/miniconda3/envs/quant/bin/python -u /data/code/my_quant_begin/graham_index.py >> /data/code/zvt/logs/graham_index.log 2>&1
+# 格雷厄姆指数：每周五 18:30
+30 18 * * 5 cd /data/code/my_quant_begin && /root/miniconda3/envs/quant/bin/python -u /data/code/my_quant_begin/graham_index.py >> /data/code/zvt/logs/graham_index.log 2>&1
 ```
 
 | 任务 | 脚本 | 执行时间 | 日志文件 |
 |------|------|----------|----------|
-| ZVT 每日数据更新 | `zvt_daily_job.py` | 周一至周五 16:30 | `/data/code/zvt/logs/daily_job.log` |
-| 格雷厄姆指数 | `graham_index.py` | 每周五 17:00 | `/data/code/zvt/logs/graham_index.log` |
+| ZVT 每日数据更新 | `zvt_daily_job.py` | 周一至周五 18:00 | `/data/code/zvt/logs/daily_job.log` |
+| 格雷厄姆指数 | `graham_index.py` | 每周五 18:30 | `/data/code/zvt/logs/graham_index.log` |
 
 ## 日常操作
 
@@ -45,12 +45,18 @@ tail -100 /data/code/zvt/logs/daily_job.log
 
 ### 管理定时任务
 
-```bash
-# 查看所有定时任务
-crontab -l
+推荐通过维护专门的配置文件来管理定时任务，而非直接使用 `crontab -e`：
 
-# 编辑定时任务（打开编辑器，逐行增删改）
-crontab -e
+1. 编辑配置文件：`/data/code/zvt/scripts/crontab.txt`
+2. 应用配置：
+```bash
+crontab /data/code/zvt/scripts/crontab.txt
+```
+
+其他常用命令：
+```bash
+# 查看所有生效中的定时任务
+crontab -l
 
 # 清空所有定时任务（慎用）
 crontab -r
@@ -58,13 +64,13 @@ crontab -r
 
 ### 暂停某个任务
 
-`crontab -e` 打开后，在对应行前加 `#` 注释掉即可：
+在 `/data/code/zvt/scripts/crontab.txt` 中，在对应行前加 `#` 注释掉即可：
 
 ```
-# 30 16 * * 1-5 /root/miniconda3/envs/quant/bin/python -u ...
+# 0 18 * * 1-5 /root/miniconda3/envs/quant/bin/python -u ...
 ```
 
-恢复时去掉 `#` 保存退出。
+恢复时去掉 `#` 保存文件，并执行 `crontab /data/code/zvt/scripts/crontab.txt` 生效。
 
 ### 手动立即执行
 
@@ -80,7 +86,7 @@ cd /data/code/my_quant_begin && /root/miniconda3/envs/quant/bin/python -u /data/
 
 ### 修改执行时间
 
-`crontab -e` 打开后修改时间字段，cron 时间格式为：
+修改 `/data/code/zvt/scripts/crontab.txt` 中的时间字段并重新应用。cron 时间格式为：
 
 ```
 分 时 日 月 星期几

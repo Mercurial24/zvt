@@ -14,4 +14,6 @@
 
 ## 当前 TODO 列表
 1、优化ui页面
-2、有经费了让AI跟着文档查一下record
+2、有经费了且xysz更新markdown了让AI跟着文档查一下record
+3、实时行情订阅
+4、交易下单模块

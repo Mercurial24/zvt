@@ -7,7 +7,7 @@ import gc
 import logging
 
 from zvt.contract.recorder import FixedCycleDataRecorder
-from zvt.domain import Stock, BalanceSheet, IncomeStatement, CashFlowStatement, StockValuation, Stock1dKdata
+from zvt.domain import Stock, BalanceSheet, IncomeStatement, CashFlowStatement, StockValuation, Stock1dKdata, FinanceFactor
 from zvt.contract.api import df_to_db, get_entities
 from zvt.broker.qmt import qmt_quote
 from zvt.utils.time_utils import now_pd_timestamp, to_pd_timestamp
@@ -344,6 +344,7 @@ class QmtCashFlowRecorder(BaseQmtFinanceRecorder):
             "net_cash_flows_investing_activities": "net_investing_cash_flows",
             "net_cash_flows_financing_activities": "net_financing_cash_flows",
             "net_increase_in_cash_and_cash_equivalents": "net_cash_increase",
+            "other_cash_pay_ral_inv_act": "cash_to_other_investing",
         }
 
 
@@ -579,9 +580,95 @@ class QmtValuationRecorder(FixedCycleDataRecorder):
             )
             self.logger.info(f"Calculated {len(val_list)} qmt valuation records for {entity_id}")
 
+class QmtFinanceFactorRecorder(BaseQmtFinanceRecorder):
+    data_schema = FinanceFactor
+    table_name = "Pershareindex"
+
+    def _get_column_map(self):
+        # QMT Pershareindex field names -> ZVT FinanceFactor column names
+        return {
+            "s_fa_ocfps": "op_cash_flow_ps",
+            "s_fa_bps": "bps",
+            "s_fa_eps_basic": "basic_eps",
+            "s_fa_eps_diluted": "diluted_eps",
+            "s_fa_undistributedps": "undistributed_profit_ps",
+            "s_fa_surpluscapitalps": "capital_reserve_ps",
+            "adjusted_earnings_per_share": "deducted_eps",
+            "du_return_on_equity": "roe",
+            "sales_gross_profit": "gross_profit_margin",
+            "inc_revenue_rate": "op_income_growth_yoy",
+            "du_profit_rate": "net_profit_growth_yoy",
+            "inc_net_profit_rate": "net_profit_growth_yoy",
+            "adjusted_net_profit_rate": "deducted_net_profit_growth_yoy",
+            "actual_tax_rate": "actual_tax_rate",
+            "gear_ratio": "debt_asset_ratio",
+            "inventory_turnover": "inventory_turnover",
+            "net_profit": "net_margin",
+        }
+
+from zvt.domain import HolderNum, TopTenTradableHolder, TopTenHolder
+
+class QmtHolderNumRecorder(BaseQmtFinanceRecorder):
+    data_schema = HolderNum
+    table_name = "Holdernum"
+
+    def _transform_df(self, df: pd.DataFrame, entity):
+        # QMT Holdernum uses endDate and declareDate
+        if "endDate" in df.columns:
+            df["report_date"] = df["endDate"]
+        if "declareDate" in df.columns:
+            df["m_anntime"] = df["declareDate"]
+        return super()._transform_df(df, entity)
+
+    def _get_column_map(self):
+        return {
+            "shareholder_a": "holder_num",
+            "shareholder": "total_holder_num",
+            "shareholdera": "holder_num",
+        }
+
+class QmtTopTenHolderRecorder(BaseQmtFinanceRecorder):
+    data_schema = TopTenHolder
+    table_name = "Top10holder"
+
+    def _transform_df(self, df: pd.DataFrame, entity):
+        # QMT Top10holder uses endDate and declareDate
+        if "endDate" in df.columns:
+            df["report_date"] = df["endDate"]
+        if "declareDate" in df.columns:
+            df["m_anntime"] = df["declareDate"]
+        return super()._transform_df(df, entity)
+
+    def _get_column_map(self):
+        return {
+            "name": "holder_name",
+            "type": "holder_type",
+            "quantity": "shareholding_numbers",
+            "ratio": "shareholding_ratio",
+        }
+
+class QmtTopTenTradableHolderRecorder(BaseQmtFinanceRecorder):
+    data_schema = TopTenTradableHolder
+    table_name = "Top10flowholder"
+
+    def _transform_df(self, df: pd.DataFrame, entity):
+        # QMT Top10flowholder uses endDate and declareDate
+        if "endDate" in df.columns:
+            df["report_date"] = df["endDate"]
+        if "declareDate" in df.columns:
+            df["m_anntime"] = df["declareDate"]
+        return super()._transform_df(df, entity)
+
+    def _get_column_map(self):
+        return {
+            "name": "holder_name",
+            "type": "holder_type",
+            "quantity": "shareholding_numbers",
+            "ratio": "shareholding_ratio",
+        }
+
 if __name__ == "__main__":
     QmtBalanceSheetRecorder(codes=['000001']).run()
-
 
 __all__ = [
     "BaseQmtFinanceRecorder",
@@ -589,4 +676,8 @@ __all__ = [
     "QmtIncomeStatementRecorder",
     "QmtCashFlowRecorder",
     "QmtValuationRecorder",
+    "QmtFinanceFactorRecorder",
+    "QmtHolderNumRecorder",
+    "QmtTopTenHolderRecorder",
+    "QmtTopTenTradableHolderRecorder",
 ]

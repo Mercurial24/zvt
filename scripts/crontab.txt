@@ -1,0 +1,5 @@
+# ZVT 每日数据更新：周一到周五 18:00
+0 18 * * 1-5 /root/miniconda3/envs/quant/bin/python -u /data/code/zvt/zvt_daily_job.py >> /data/code/zvt/logs/daily_job.log 2>&1
+
+# 格雷厄姆指数：每周五 18:30
+30 18 * * 5 cd /data/code/my_quant_begin && /root/miniconda3/envs/quant/bin/python -u /data/code/my_quant_begin/graham_index.py >> /data/code/zvt/logs/graham_index.log 2>&1
