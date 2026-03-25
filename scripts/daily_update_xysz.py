@@ -591,6 +591,12 @@ def _update_yearly_kline_file(year: int, new_df: "pd.DataFrame") -> None:
     # 按 code 排序是关键：使得 Parquet 行组统计(min/max code)有效，查单股时能跳过无关行组
     combined = combined.sort_values(["code", "kline_time"]).reset_index(drop=True)
 
+    # 统一列类型，确保跨年份文件 schema 一致
+    if "date" in combined.columns:
+        combined["date"] = combined["date"].astype("int32")
+    if "kline_time" in combined.columns:
+        combined["kline_time"] = pd.to_datetime(combined["kline_time"]).astype("datetime64[us]")
+
     table = pa.Table.from_pandas(combined, preserve_index=False)
     pq.write_table(table, tmp_path, row_group_size=100_000, compression="snappy")
     os.replace(tmp_path, dst_path)
@@ -646,7 +652,8 @@ def update_klines_daily(client) -> list[str]:
         if "kline_time" not in df.columns:
             print(f"[日线][警告] {code}: 未找到 kline_time 列，跳过")
             continue
-        df["date"] = pd.to_datetime(df["kline_time"]).dt.strftime("%Y%m%d").astype("int64")
+        df["date"] = pd.to_datetime(df["kline_time"]).dt.strftime("%Y%m%d").astype("int32")
+        df["kline_time"] = pd.to_datetime(df["kline_time"]).astype("datetime64[us]")
         df["code"] = code
         parts.append(df)
 

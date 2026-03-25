@@ -33,6 +33,14 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
     def record(self, entity, start, end, size, timestamps):
         entity_id = entity.id
         self.logger.info(f"Calculating Valuation for {entity_id} ...")
+        try:
+            return self._do_record(entity, start, end)
+        except Exception as e:
+            self.logger.exception(f"Failed to calculate valuation for {entity_id}: {e}")
+            return None
+
+    def _do_record(self, entity, start, end):
+        entity_id = entity.id
 
         # 1. 行情（含换手率）
         kdata_df = Stock1dKdata.query_data(
@@ -166,6 +174,8 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         if not income_annual.empty:
             df_merged = pd.merge_asof(df_merged, income_annual[["ts_merge", "net_profit_annual"]].sort_values("ts_merge"), 
                                       on="ts_merge", direction="backward")
+        if "net_profit_annual" not in df_merged.columns:
+            df_merged["net_profit_annual"] = np.nan
 
         # 核心：计算估值。优先使用 K 线里的动态总股本 total_cap，取不到再用财报股本 capital
         df_merged["final_cap"] = df_merged.get("total_cap", pd.Series(np.nan, index=df_merged.index)).combine_first(df_merged["capital"])
@@ -194,13 +204,12 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
         df_merged["dividend_ps_ttm"] = np.nan
         df_merged["dividend_yield_ttm"] = np.nan
         if not dividend_df.empty:
+            # 注意：timestamp 通常是公告/入库时间，并不代表真正的派息日。
+            # dividend_date 为空时不应计入 TTM，否则会把“未落地”的方案错误计入股息率。
             if "dividend_date" in dividend_df.columns:
-                event_date = pd.to_datetime(dividend_df["dividend_date"], errors="coerce")
+                event_date = pd.to_datetime(dividend_df["dividend_date"], errors="coerce").dt.normalize()
             else:
                 event_date = pd.Series(pd.NaT, index=dividend_df.index)
-
-            fallback_ts = pd.to_datetime(dividend_df.get("timestamp"), errors="coerce")
-            event_date = event_date.fillna(fallback_ts).dt.normalize()
             cash_series = pd.to_numeric(dividend_df.get("cash_tax_free"), errors="coerce").fillna(0.0)
 
             valid_mask = event_date.notna() & cash_series.notna()
@@ -212,7 +221,10 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
                     pd.to_datetime(df_merged["ts_merge"]).dt.normalize().sort_values().unique()
                 )
                 if len(trade_days) > 0:
-                    aligned_daily_cash = daily_cash.reindex(trade_days, fill_value=0.0)
+                    # 扩展到完整日历（往前 366 天），避免增量更新时分红日期不在 trade_days 中被 reindex 丢弃
+                    full_start = trade_days.min() - pd.Timedelta(days=366)
+                    full_index = pd.date_range(full_start, trade_days.max(), freq="D")
+                    aligned_daily_cash = daily_cash.reindex(full_index, fill_value=0.0)
                     ttm_cash = aligned_daily_cash.rolling("365D", min_periods=1).sum()
                     ts_key = pd.to_datetime(df_merged["ts_merge"]).dt.normalize()
                     df_merged["dividend_ps_ttm"] = ts_key.map(ttm_cash)
@@ -258,7 +270,7 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
                 "pe_ttm": row["pe_ttm"],
                 "pe": row["pe"],
                 "market_cap": row["market_cap"],
-                "capitalization": row["capital"],
+                "capitalization": row["capital"] if pd.notna(row.get("capital")) else None,
                 "pb": row["pb"] if pd.notna(row.get("pb")) else None,
                 "ps": row["ps"] if pd.notna(row.get("ps")) else None,
                 "pcf": row["pcf"] if pd.notna(row.get("pcf")) else None,
@@ -282,5 +294,5 @@ class xyszValuationRecorder(FixedCycleDataRecorder):
             self.logger.info(f"Calculated {len(val_list)} valuation records for {entity_id}")
 
 if __name__ == "__main__":
-    recorder = xyszValuationRecorder(codes=['000001', '000736', '601599'])
+    recorder = xyszValuationRecorder(force_update=True, sleeping_time=0)
     recorder.run()

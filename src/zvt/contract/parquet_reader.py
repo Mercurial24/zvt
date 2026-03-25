@@ -138,16 +138,11 @@ class ParquetReader:
 
                     selected_files.sort()
                     logger.debug(f"Yearly pruning: {len(selected_files)}/{len(entries)} files selected")
-                    # 年度文件内 kline_time 存的是 μs，但 Polars 多文件合并 schema
-                    # 时有时推断成 ns，导致精度冲突。按 Polars 提示传入 cast_options。
-                    try:
-                        lazy_df = pl.scan_parquet(
-                            selected_files,
-                            cast_options=pl.ScanCastOptions(datetime_cast="nanosecond-downcast"),
-                        )
-                    except TypeError:
-                        # 旧版本 Polars 不支持 cast_options，直接扫描
-                        lazy_df = pl.scan_parquet(selected_files)
+                    if len(selected_files) == 1:
+                        lazy_df = pl.scan_parquet(selected_files[0])
+                    else:
+                        lazy_dfs = [pl.scan_parquet(f) for f in selected_files]
+                        lazy_df = pl.concat(lazy_dfs, how="diagonal_relaxed")
 
                 # ----------------------------------------------------------
                 # 旧日期分区格式：date=YYYYMMDD/（兼容保留）
