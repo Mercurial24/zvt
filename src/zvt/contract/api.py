@@ -323,13 +323,14 @@ def get_data(
     :param time_field:
     :return: results basing on return_type.
     """
-    # 智能路由逻辑：根据数据特征自动决定读取引擎
+    # 智能路由逻辑：默认保守，海量行情时序数据自动走 parquet，
+    # 其余 schema 默认走 sqlite；需要 parquet 的业务表可显式声明 storage_type。
     storage_type = getattr(data_schema, "storage_type", None)
     if storage_type is None:
         table_name = data_schema.__tablename__.lower()
-        # 自动路由规则：海量时序数据 (K线、Tick) 以及 预计算出来的因子库 默认走 Parquet
-        # 注意：指数 (Index) 类数据量较小，强制走 SQLite 以保持管理方便
-        if any(kw in table_name for kw in ["kdata", "tick", "factor"]) and "index" not in table_name:
+        # 自动路由规则：K线/Tick 这类海量行情时序数据默认走 parquet。
+        # 因子结果、状态表等非行情表应通过显式 storage_type 决定，避免误路由。
+        if any(kw in table_name for kw in ["kdata", "tick"]) and "index" not in table_name:
             storage_type = "parquet"
         else:
             storage_type = "sqlite"

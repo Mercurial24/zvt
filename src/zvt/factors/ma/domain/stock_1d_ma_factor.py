@@ -10,6 +10,7 @@ Stock1dMaFactorBase = declarative_base()
 
 class Stock1dMaFactor(Stock1dMaFactorBase, Mixin):
     __tablename__ = "Stock1dMaFactor"
+    storage_type = "parquet"
 
     level = Column(String(length=32))
     code = Column(String(length=32))

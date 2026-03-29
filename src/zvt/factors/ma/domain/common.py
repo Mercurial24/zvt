@@ -5,6 +5,8 @@ from zvt.contract import Mixin
 
 
 class MaStatsFactorCommon(Mixin):
+    storage_type = "parquet"
+
     open = Column(Float)
     close = Column(Float)
     high = Column(Float)

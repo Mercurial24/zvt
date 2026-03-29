@@ -19,6 +19,65 @@ logger = logging.getLogger(__name__)
 XYSZ_PARQUET_BASE_DIR = os.environ.get("XYSZ_PARQUET_BASE_DIR", "/mnt/point/stock_data/xysz_data/base_data")
 QMT_PARQUET_BASE_DIR = os.environ.get("QMT_PARQUET_BASE_DIR", "/mnt/point/stock_data/qmt_data/base_data")
 
+
+def _extract_order_specs(order, available_cols: List[str], time_field: str = "timestamp"):
+    if order is None:
+        return []
+
+    orders = order if isinstance(order, (list, tuple)) else [order]
+    specs = []
+    for item in orders:
+        col_name = None
+        descending = False
+
+        if isinstance(item, str):
+            parts = item.strip().split()
+            if parts:
+                col_name = parts[0]
+                if len(parts) > 1:
+                    descending = parts[1].lower() == "desc"
+        elif hasattr(item, "element"):
+            element = getattr(item, "element", None)
+            col_name = getattr(element, "name", None) or getattr(item, "name", None)
+            modifier = getattr(item, "modifier", None)
+            modifier_name = getattr(modifier, "__name__", "")
+            descending = modifier_name == "desc_op"
+        elif hasattr(item, "name"):
+            col_name = item.name
+
+        if not col_name:
+            continue
+
+        actual_col_name = col_name
+        if actual_col_name not in available_cols and actual_col_name == time_field:
+            if "timestamp" in available_cols:
+                actual_col_name = "timestamp"
+            elif "date" in available_cols:
+                actual_col_name = "date"
+            elif "kline_time" in available_cols:
+                actual_col_name = "kline_time"
+
+        if actual_col_name in available_cols:
+            specs.append((actual_col_name, descending))
+
+    return specs
+
+
+def _sort_pandas_df(df: pd.DataFrame, order_specs):
+    if df is None or df.empty or not order_specs:
+        return df
+
+    sort_cols = []
+    ascending = []
+    for col_name, descending in order_specs:
+        if col_name in df.columns:
+            sort_cols.append(col_name)
+            ascending.append(not descending)
+
+    if sort_cols:
+        return df.sort_values(by=sort_cols, ascending=ascending)
+    return df
+
 def get_parquet_dir(provider: str) -> str:
     if provider == "xysz":
         return XYSZ_PARQUET_BASE_DIR
@@ -278,6 +337,8 @@ class ParquetReader:
             for expr in filter_exprs[1:]:
                 combined_filter = combined_filter & expr
             lazy_df = lazy_df.filter(combined_filter)
+
+        order_specs = _extract_order_specs(order=order, available_cols=available_cols, time_field=time_field)
             
         # -----------------------------
         # Collect 数据
@@ -286,9 +347,15 @@ class ParquetReader:
             if final_select_cols:
                 lazy_df = lazy_df.select(final_select_cols)
 
+            if order_specs:
+                lazy_df = lazy_df.sort(
+                    [col_name for col_name, _ in order_specs],
+                    descending=[descending for _, descending in order_specs],
+                )
+
             if limit is not None:
                 lazy_df = lazy_df.limit(limit)
-            
+
             # Streaming 模式 collect 来减少内存膨胀
             # 较新版本的 polars 没有 collect(streaming=True) 而是直接 collect
             df = lazy_df.collect().to_pandas()
@@ -334,10 +401,19 @@ class ParquetReader:
                  df["id"] = df["entity_id"] + "_" + df["date"].astype(str)
 
         if pd_is_not_null(df):
-            # Sort 按 sqlalchemy 默认行为
-            sort_cols = [c for c in ["entity_id", time_field] if c in df.columns]
-            if sort_cols:
-                df = df.sort_values(by=sort_cols)
+            if order_specs:
+                normalized_order_specs = []
+                for col_name, descending in order_specs:
+                    normalized_col_name = col_name
+                    if col_name in ("date", "kline_time") and "timestamp" in df.columns:
+                        normalized_col_name = "timestamp"
+                    normalized_order_specs.append((normalized_col_name, descending))
+                df = _sort_pandas_df(df, normalized_order_specs)
+            else:
+                # Sort 按 sqlalchemy 默认行为
+                sort_cols = [c for c in ["entity_id", time_field] if c in df.columns]
+                if sort_cols:
+                    df = df.sort_values(by=sort_cols)
                 
             if index:
                 from zvt.utils.pd_utils import index_df

@@ -9,6 +9,8 @@ ZvtInfoBase = declarative_base()
 
 
 class StateMixin(Mixin):
+    storage_type = "sqlite"
+
     #: the unique name of the service, e.g. recorder,factor,tag
     state_name = Column(String(length=128))
 

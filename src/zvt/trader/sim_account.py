@@ -3,6 +3,8 @@ import logging
 import math
 from typing import List, Optional
 
+import pandas as pd
+
 from zvt.api.kdata import get_kdata, get_kdata_schema
 from zvt.contract import IntervalLevel, TradableEntity, AdjustType
 from zvt.contract.api import get_db_session, decode_entity_id
@@ -20,6 +22,24 @@ from zvt.trader.trader_schemas import AccountStats, Position, Order, TraderInfo
 from zvt.utils.pd_utils import pd_is_not_null
 from zvt.utils.time_utils import to_pd_timestamp, to_date_time_str, TIME_FORMAT_ISO8601, is_same_date
 from zvt.utils.utils import fill_domain_from_dict
+
+
+def _finite_number(x) -> bool:
+    try:
+        if x is None or (isinstance(x, float) and math.isnan(x)):
+            return False
+        v = float(x)
+        return math.isfinite(v)
+    except (TypeError, ValueError):
+        return False
+
+
+def _coerce_float(x, default: float = 0.0) -> float:
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else default
+    except (TypeError, ValueError):
+        return default
 
 
 class SimAccountService(AccountService):
@@ -115,6 +135,8 @@ class SimAccountService(AccountService):
             input_money=self.base_capital,
             all_value=self.base_capital,
             value=0,
+            profit=0.0,
+            profit_rate=0.0,
             closing=False,
         )
 
@@ -187,11 +209,11 @@ class SimAccountService(AccountService):
                 raise WrongKdataError("could not get kdata")
 
             if pd_is_not_null(kdata):
-                entity_type, _, _ = decode_entity_id(kdata["entity_id"][0])
+                entity_type, _, _ = decode_entity_id(kdata["entity_id"].iloc[0])
 
-                the_price = kdata["close"][0]
+                the_price = kdata["close"].iloc[0]
 
-                if the_price:
+                if _finite_number(the_price):
                     if trading_signal.position_pct:
                         self.order_by_position_pct(
                             entity_id=entity_id,
@@ -258,23 +280,24 @@ class SimAccountService(AccountService):
                 adjust_type=self.adjust_type,
             )
 
-            closing_price = kdata["close"][0]
-
             position.available_long = position.long_amount
             position.available_short = position.short_amount
 
-            if closing_price:
+            if pd_is_not_null(kdata) and _finite_number(kdata["close"].iloc[0]):
+                closing_price = float(kdata["close"].iloc[0])
                 if (position.long_amount is not None) and position.long_amount > 0:
                     position.value = position.long_amount * closing_price
                     self.account.value += position.value
+                    position.profit = (closing_price - position.average_long_price) * position.long_amount
+                    denom = position.average_long_price * position.long_amount
+                    position.profit_rate = position.profit / denom if denom else 0.0
                 elif (position.short_amount is not None) and position.short_amount > 0:
                     position.value = 2 * (position.short_amount * position.average_short_price)
                     position.value -= position.short_amount * closing_price
                     self.account.value += position.value
-
-                # refresh profit
-                position.profit = (closing_price - position.average_long_price) * position.long_amount
-                position.profit_rate = position.profit / (position.average_long_price * position.long_amount)
+                    position.profit = (position.average_short_price - closing_price) * position.short_amount
+                    denom = position.average_short_price * position.short_amount
+                    position.profit_rate = position.profit / denom if denom else 0.0
 
             else:
                 self.logger.warning(
@@ -288,11 +311,17 @@ class SimAccountService(AccountService):
             position.account_stats_id = the_id
 
         self.account.id = the_id
-        self.account.all_value = self.account.value + self.account.cash
+        self.account.value = _coerce_float(self.account.value, 0.0)
+        for position in self.account.positions:
+            position.value = _coerce_float(position.value, 0.0)
+            position.profit = _coerce_float(position.profit, 0.0)
+            position.profit_rate = _coerce_float(position.profit_rate, 0.0)
+        self.account.all_value = _coerce_float(self.account.value + self.account.cash, 0.0)
         self.account.closing = True
         self.account.timestamp = to_pd_timestamp(timestamp)
-        self.account.profit = self.account.all_value - self.account.input_money
-        self.account.profit_rate = self.account.profit / self.account.input_money
+        self.account.profit = _coerce_float(self.account.all_value - self.account.input_money, 0.0)
+        im = _coerce_float(self.account.input_money, 0.0)
+        self.account.profit_rate = self.account.profit / im if im else 0.0
 
         self.session.add(self.account)
         self.session.commit()

@@ -5,6 +5,8 @@ from zvt.contract import Mixin
 
 
 class ZenFactorCommon(Mixin):
+    storage_type = "parquet"
+
     level = Column(String(length=32))
     # 开盘价
     open = Column(Float)
