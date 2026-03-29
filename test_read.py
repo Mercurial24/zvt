@@ -17,7 +17,7 @@ def _xysz_entity_id_from_market_code(market_code: str) -> str:
     return f"stock_{ex.lower()}_{num}"
 
 if __name__ == "__main__":
-    code = "000001.SZ"
+    code = "000786.SZ"
     start_ts = "2025-01-01"
     
     # 1. 测试读取 不复权(BFQ) K线

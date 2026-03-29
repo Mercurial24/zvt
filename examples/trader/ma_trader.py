@@ -20,14 +20,13 @@ class MyMaTrader(StockTrader):
                 end_timestamp=end_timestamp,
                 windows=[5, 10],
                 need_persist=False,
+                provider="qmt",
             )
         ]
 
 
 class MyBullTrader(StockTrader):
-    def init_factors(
-        self, entity_ids, entity_schema, exchanges, codes, start_timestamp, end_timestamp, adjust_type=None
-    ):
+    def init_factors(self, entity_ids, entity_schema, exchanges, codes, start_timestamp, end_timestamp, adjust_type=None):
         return [
             BullFactor(
                 entity_ids=entity_ids,
@@ -37,6 +36,7 @@ class MyBullTrader(StockTrader):
                 start_timestamp=start_timestamp,
                 end_timestamp=end_timestamp,
                 adjust_type="hfq",
+                provider="qmt",
             )
         ]
 
@@ -44,11 +44,12 @@ class MyBullTrader(StockTrader):
 if __name__ == "__main__":
     # single stock with cross ma factor
     MyBullTrader(
-        codes=["000338"],
+        entity_ids=["stock_sz_000338"],
+        provider="qmt",
         level=IntervalLevel.LEVEL_1DAY,
         start_timestamp="2019-01-01",
         end_timestamp="2019-06-30",
-        trader_name="000338_ma_trader",
+        trader_name="000338_bull_trader_v2",
     ).run()
 
     # single stock with bull factor
