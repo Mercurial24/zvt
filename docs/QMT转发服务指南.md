@@ -2,7 +2,7 @@
 
 > **【🤖 AI 助手上下文说明 / AI Context】**
 > **核心架构**：由于 Linux 无法安装 `xtquant`，本系统采用 **HTTP RPC 远程透传** 机制。Linux 侧所有 QMT 逻辑均已重构，**严禁在 Linux 尝试直接 `import xtquant`**。
-> **详细指南**：请优先查阅 [AGENT_GUIDE_QMT_LINUX.md](AGENT_GUIDE_QMT_LINUX.md) 了解当前架构和代码调用规范。
+> **详细指南**：请优先查阅 [QMT_Linux集成手册.md](QMT_Linux集成手册.md) 了解当前架构和代码调用规范。
 > **底层驱动**：`src/zvt/broker/qmt/qmt_remote.py` 是通信核心，负责将本地调用代理到 Windows 端。
 
 > **背景**：这是一个基于 HTTP 的轻量级 RPC（远程过程调用）机制，用于在 Ubuntu 上穿透调用 Windows 上的 QMT（xtquant）功能（量化策略与数据拉取）。
