@@ -9,36 +9,17 @@ from zvt.common.trading_models import BuyParameter, PositionType, SellParameter
 from zvt.trader import AccountService, TradingSignal, OrderType, trading_signal_type_to_order_type
 from zvt.utils.time_utils import now_pd_timestamp, to_pd_timestamp
 
-# Fallback to remote for Linux
-try:
-    from xtquant import xtconstant, xtdata
-    from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
-    from xtquant.xttype import StockAccount, XtPosition
-    _REMOTE = False
-except ImportError:
-    from zvt.broker.qmt.qmt_remote import xtdata, QMTForwardClient
-    xtconstant = None # We might need to map some constants if they want to use them
-    XtQuantTrader = None
-    XtQuantTraderCallback = object
-    StockAccount = None
-    XtPosition = None
-    _REMOTE = True
+from zvt.broker.qmt.qmt_remote import xtdata, QMTForwardClient
 
 logger = logging.getLogger(__name__)
 
 
 def _to_qmt_order_type(order_type: OrderType):
-    if _REMOTE:
-        # These are standard constants in QMT
-        if order_type == OrderType.order_long:
-            return 23 # STOCK_BUY
-        elif order_type == OrderType.order_close_long:
-            return 24 # STOCK_SELL
-    else:
-        if order_type == OrderType.order_long:
-            return xtconstant.STOCK_BUY
-        elif order_type == OrderType.order_close_long:
-            return xtconstant.STOCK_SELL
+    # These are standard constants in QMT
+    if order_type == OrderType.order_long:
+        return 23 # STOCK_BUY
+    elif order_type == OrderType.order_close_long:
+        return 24 # STOCK_SELL
 
 
 class QmtStockAccount(AccountService):
@@ -49,13 +30,9 @@ class QmtStockAccount(AccountService):
         self.account_id = account_id
         logger.info(f"path: {path}, account: {account_id}, trader_name: {trader_name}, session: {session_id}")
 
-        if _REMOTE:
-            client = QMTForwardClient(base_url, token)
-            self.xt_trader = client.call("xtquant.xttrader.XtQuantTrader", path, session_id)
-            self.account = client.call("xtquant.xttype.StockAccount", account_id, "STOCK")
-        else:
-            self.xt_trader = XtQuantTrader(path=path, session=session_id)
-            self.account = StockAccount(account_id=account_id, account_type="STOCK")
+        client = QMTForwardClient(base_url, token)
+        self.xt_trader = client.call("xtquant.xttrader.XtQuantTrader", path, session_id)
+        self.account = client.call("xtquant.xttype.StockAccount", account_id, "STOCK")
 
         # Start and connect
         self.xt_trader.start()
@@ -65,17 +42,9 @@ class QmtStockAccount(AccountService):
             raise QmtError(f"qmt trader 连接失败: {connect_result}")
         logger.info("qmt trader 建立交易连接成功！")
 
-        # Callbacks are not supported over HTTP RPC easily, so we skip subscription or use alternate if needed
-        if not _REMOTE:
-            # Native subscription
-            # from zvt.broker.qmt.qmt_account import MyXtQuantTraderCallback
-            # callback = MyXtQuantTraderCallback()
-            # self.xt_trader.register_callback(callback)
-            self.xt_trader.subscribe(self.account)
-        else:
-            # Remote subscription requires a different mechanism as per README.md (Redis/MQ)
-            # For now we just allow the trader to be used for active orders (Polling)
-            pass
+        # Remote subscription requires a different mechanism as per README.md (Redis/MQ)
+        # For now we just allow the trader to be used for active orders (Polling)
+        pass
 
     def get_positions(self):
         return self.xt_trader.query_stock_positions(self.account)
