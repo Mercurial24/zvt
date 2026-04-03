@@ -27,6 +27,10 @@ class OrderType(Enum):
 
 
 def trading_signal_type_to_order_type(trading_signal_type):
+    """将策略意图（TradingSignalType）映射为柜台报单动作（OrderType）。
+    open_long → order_long，close_long → order_close_long，以此类推。
+    keep_long / keep_short 没有对应的报单动作，返回 None。
+    """
     if trading_signal_type == TradingSignalType.open_long:
         return OrderType.order_long
     elif trading_signal_type == TradingSignalType.open_short:
@@ -39,6 +43,13 @@ def trading_signal_type_to_order_type(trading_signal_type):
 
 @to_string
 class TradingSignal:
+    """交易信号：策略大脑向账户服务传递买卖意图的核心数据包。
+
+    一个信号描述了"对哪个标的、在什么时间窗口内、做什么操作、用多少仓位/资金/股数"。
+    下单规模三选一：position_pct / order_money / order_amount，构造时断言只能传其中一个。
+    默认路径（Trader.buy/sell）始终使用 position_pct。
+    """
+
     def __init__(
         self,
         entity_id: str,
@@ -51,15 +62,14 @@ class TradingSignal:
         order_amount: int = None,
     ):
         """
-
-        :param entity_id: the entity id
-        :param due_timestamp: the signal due time
-        :param happen_timestamp: the time when generating the signal
-        :param trading_level: the level
-        :param trading_signal_type:
-        :param position_pct: percentage of account to order
-        :param order_money: money to order
-        :param order_amount: amount to order
+        :param entity_id:           交易标的 ID，如 stock_sz_000338
+        :param due_timestamp:       信号过期时间（= happen_timestamp + 一个周期），过期后该信号不再有效
+        :param happen_timestamp:    信号产生时间；账户服务据此时间取对应 K 线的 close 价撮合
+        :param trading_level:       信号所在的 K 线级别（日线/周线/分钟线…）
+        :param trading_signal_type: 策略意图（open_long / close_long 等）
+        :param position_pct:        【三选一】目标仓位占账户总资金的比例（0~1），最常用
+        :param order_money:         【三选一】本次下单使用的固定资金金额（元）
+        :param order_amount:        【三选一】本次下单精确的股数/手数
         """
         self.entity_id = entity_id
         self.due_timestamp = due_timestamp
@@ -69,9 +79,7 @@ class TradingSignal:
 
         if len([x for x in (position_pct, order_money, order_amount) if x is not None]) != 1:
             assert False
-        # use position_pct or order_money or order_amount
         self.position_pct = position_pct
-        # when close the position,just use position_pct
         self.order_money = order_money
         self.order_amount = order_amount
 
