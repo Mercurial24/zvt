@@ -28,23 +28,40 @@ class Trader(object):
 
     def __init__(
         self,
+        # 标的 ID 列表，如 ["stock_sz_000338", "stock_sh_600036"]，与 exchanges/codes 三选一指定标的范围
         entity_ids: List[str] = None,
+        # 交易所列表，如 ["sz", "sh"]，用于按交易所筛选标的
         exchanges: List[str] = None,
+        # 股票代码列表，如 ["000338", "600036"]，用于按代码筛选标的
         codes: List[str] = None,
+        # 回测/运行的起始时间，如 "2020-01-01"
         start_timestamp: Union[str, pd.Timestamp] = None,
+        # 回测/运行的结束时间，如 "2024-12-31"；实盘模式下应设为足够远的未来
         end_timestamp: Union[str, pd.Timestamp] = None,
+        # 数据供应商，如 "joinquant"、"qmt"，决定从哪里取 K 线数据
         provider: str = None,
+        # 主循环的时间步进级别，如日线、5分钟线；必须 ≤ 所有因子中最小的级别
         level: Union[str, IntervalLevel] = IntervalLevel.LEVEL_1DAY,
+        # 策略名称，用于数据落库时区分不同策略的记录；不传则用类名小写
         trader_name: str = None,
+        # 是否实盘模式；True 时主循环会等待真实 K 线就绪，而非直接遍历历史数据
         real_time: bool = False,
+        # K线时间戳含义：False=收到时该K线已完成（默认），True=收到时K线可能还在形成中
         kdata_use_begin_time: bool = False,
+        # 运行结束后是否自动画出资产曲线图
         draw_result: bool = True,
+        # 富裕模式：True=资金不够时自动追加100万（方便回测不中断），正式验证策略应设 False
         rich_mode: bool = False,
+        # 复权方式，如 AdjustType.hfq（后复权），影响 K 线价格和因子计算
         adjust_type: AdjustType = None,
+        # 止盈止损阈值：(止盈倍数, 止损比例)，如 (3, -0.3) 表示盈利300%止盈、亏损30%止损
         profit_threshold=(3, -0.3),
+        # 是否保留历史账户快照（True=每次运行追加记录，False=清除旧记录重新开始）
         keep_history=False,
+        # 因子预热天数：init_factors 的 start_timestamp 会往前推这么多天，让均线等指标有足够历史数据
         pre_load_days=365,
     ) -> None:
+        # 子类必须指定标的类型（如 StockTrader 设为 Stock）
         assert self.entity_schema is not None
         assert start_timestamp is not None
         assert end_timestamp is not None
@@ -54,19 +71,21 @@ class Trader(object):
         if trader_name:
             self.trader_name = trader_name
         else:
+            # 默认用类名小写作为策略名，如 StockTrader → "stocktrader"
             self.trader_name = type(self).__name__.lower()
 
         self.entity_ids = entity_ids
         self.exchanges = exchanges
         self.codes = codes
         self.provider = provider
-        # make sure the min level factor correspond to the provider and level
+        # 主循环的时间步进级别，run() 里按此级别生成时间序列逐步迭代
         self.level = IntervalLevel(level)
         self.real_time = real_time
         self.start_timestamp = to_pd_timestamp(start_timestamp)
         self.end_timestamp = to_pd_timestamp(end_timestamp)
         self.pre_load_days = pre_load_days
 
+        # 生成回测区间内的交易日历（字符串列表），用于 run() 中跳过非交易日
         self.trading_dates = self.entity_schema.get_trading_dates(
             start_date=self.start_timestamp, end_date=self.end_timestamp
         )
@@ -77,8 +96,8 @@ class Trader(object):
             )
             assert self.end_timestamp >= now_pd_timestamp()
 
-        # false: 收到k线时，该k线已完成
-        # true: 收到k线时，该k线可能未完成
+        # False: 收到K线时该K线已完成（回测默认）
+        # True: 收到K线时该K线可能未完成（实盘分钟线场景）
         self.kdata_use_begin_time = kdata_use_begin_time
         self.draw_result = draw_result
         self.rich_mode = rich_mode
@@ -87,13 +106,18 @@ class Trader(object):
         self.profit_threshold = profit_threshold
         self.keep_history = keep_history
 
+        # 多级别因子的目标缓存：{IntervalLevel: [entity_id, ...]}
+        # 各级别因子产出的看多/看空标的分别存在这两个字典里，最终在 on_targets_selected_from_levels 中汇总
         self.level_map_long_targets = {}
         self.level_map_short_targets = {}
+        # 待执行的交易信号队列：本周期 buy()/sell() 生成的信号压入此列表，下一周期开始时才消费
         self.trading_signals: List[TradingSignal] = []
+        # 信号监听器列表（观察者模式）：Trader 广播事件，列表中所有监听器接收
+        # 典型内容：[SimAccountService] 或 [QmtStockAccount]，也可同时挂多个
         self.trading_signal_listeners: List[TradingListener] = []
 
-        # [架构重点/断裂点]
-        # 此处写死实例化了 SimAccountService (模拟/回测账户)
+        # [架构重点/断裂点1]
+        # 此处写死实例化了 SimAccountService（模拟/回测账户）
         # 意味着默认情况下，所有的交易大脑都会连接虚拟沙盘撮合，目前还未提供给外部直接替换挂载 QMT 的参数
         self.account_service = SimAccountService(
             entity_schema=self.entity_schema,
@@ -106,8 +130,12 @@ class Trader(object):
             keep_history=self.keep_history,
         )
 
+        # 把账户服务注册为信号监听器，这样 Trader 广播的 on_trading_open/signals/close 等事件
+        # 都会自动转发给 account_service
         self.register_trading_signal_listener(self.account_service)
 
+        # 调用子类覆写的 init_factors()，初始化策略因子
+        # start_timestamp 往前推 pre_load_days 天，给因子留出历史数据预热期
         self.factors = self.init_factors(
             entity_ids=self.entity_ids,
             entity_schema=self.entity_schema,
@@ -119,17 +147,22 @@ class Trader(object):
         )
 
         if self.factors:
+            # 收集所有因子涉及的时间级别，去重后升序排列
             self.trading_level_asc = list(set([IntervalLevel(factor.level) for factor in self.factors]))
             self.trading_level_asc.sort()
 
             self.logger.info(f"trader level:{self.level},factors level:{self.trading_level_asc}")
 
+            # [关键校验] Trader 的 level 必须等于因子中最小的级别
+            # 原因：主循环按 self.level 步进，如果 level 比最小因子还粗，细粒度因子的信号就会丢失
             if self.level != self.trading_level_asc[0]:
                 raise Exception("trader level should be the min of the factors")
 
+            # 降序副本，用于 on_targets_selected_from_levels 中从大级别到小级别合并目标
             self.trading_level_desc = list(self.trading_level_asc)
             self.trading_level_desc.reverse()
         else:
+            # 没有因子时，级别列表就只有 Trader 自身的 level
             self.trading_level_asc = [self.level]
             self.trading_level_desc = [self.level]
         self.on_init()
@@ -480,7 +513,7 @@ class Trader(object):
                         self.logger.info(f"time is:{now_pd_timestamp()},just smoke for minutes")
                         time.sleep(600)
                         current = now_pd_timestamp()
-                        if current.hour >= 19:
+                        if current.hour >= 21:
                             waiting_seconds = 20
                             break
 
